@@ -2,3 +2,6 @@ build/
 output/
 data/*.mp4
 data/*.txt
+data/*.pdf
+data/*.PNG
+data/*.png
