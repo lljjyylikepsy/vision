@@ -1,3 +1,4 @@
 build/
 output/
 data/*.mp4
+data/*.txt

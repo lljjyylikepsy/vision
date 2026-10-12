@@ -9,3 +9,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_executable(task2 src/task2.cpp)
 target_link_libraries(task2 ${OpenCV_LIBS})
+
+add_executable(task3 src/task3.cpp)
+target_link_libraries(task3 ${OpenCV_LIBS})
