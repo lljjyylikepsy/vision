@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.16)
+set(CMAKE_CXX_STANDARD 17)
+project(demo CXX)
+find_package(OpenCV REQUIRED)
+
+add_executable(main src/main.cpp)
+target_link_libraries(main ${OpenCV_LIBS})
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+add_executable(task2 src/task2.cpp)
+target_link_libraries(task2 ${OpenCV_LIBS})

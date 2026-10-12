@@ -1,0 +1,175 @@
+OpenCV 学习笔记
+=============================================================================
+
+一、常用函数速记
+  Mat               声明一个图像（二维像素矩阵容器，自动管理内存）
+  imread("地址")     输入图像
+  imshow("窗口", 图) 展示窗口
+  cvtColor(输入, 输出, 颜色空间)  转换颜色空间
+  waitKey()         0 为一直等待按键，具体数值表示等待的毫秒数
+  imwrite("地址", 图) 保存图片
+
+二、OpenCV 中的 HSV 颜色表
+  OpenCV 的 H 范围是 0~179，S 和 V 范围都是 0~255。
+  识别颜色时通常把 S 和 V 设为 50~255 或 100~255，用来排除白色、黑色和太暗的像素。
+    红色：  H 0~10 和 H 170~179（红色跨色相环两端，需要两个区间合并）
+    橙色：  H 11~25
+    黄色：  H 26~34
+    绿色：  H 35~85
+    青色：  H 86~99
+    蓝色：  H 100~124
+    紫色：  H 125~155
+    粉色：  H 156~169
+
+三、第一次接触 OpenCV 时容易忽略的地方
+  1. 图像变量是 cv::Mat。Mat b = a; 只是浅拷贝，a 和 b 共用同一份像素数据；
+     如果真的要复制一份独立图像，用 a.clone() 或 a.copyTo(b)。
+  2. imread 读入的图像默认是 BGR 顺序，不是 RGB。
+     所以 Scalar(0, 0, 255) 在 BGR 图像中表示红色，第三个数值才是红色通道。
+  3. cvtColor 转到 HSV 后，H 是 0~179，而不是常见的 0~360。
+     这是 OpenCV 和一般颜色教程最不一样的地方，写阈值时不要超过 179。
+  4. Scalar 是多个数值组成的小容器，常用来表示颜色或阈值。
+     BGR 图像中写作 Scalar(b, g, r)，HSV 图像中写作 Scalar(h, s, v)。
+  5. imshow 只是显示窗口，必须配合 waitKey 才会刷新并等待按键。
+     waitKey(0) 表示一直等待按键；waitKey(30) 表示等待 30 毫秒，常用于视频循环。
+  6. inRange 是闭区间判断，三个通道都满足 lower <= 像素 <= upper 时才算目标。
+     返回的 mask 是一张单通道黑白图，白色 255 表示目标，黑色 0 表示非目标。
+  7. findContours 是在“黑底白目标”的掩膜上寻找白色连通区域。
+     contours 的类型是 std::vector<std::vector<cv::Point>>。
+     某些 OpenCV 版本可能修改传入的掩膜，稳妥起见可以传 mask.clone()。
+  8. contourArea 返回轮廓面积，常用于过滤太小的噪声区域。
+     boundingRect 返回轴对齐矩形 Rect，字段是 x、y、width、height。
+  9. 常用的小结构体：
+       cv::Point(x, y)        表示坐标点
+       cv::Size(w, h)         表示宽度和高度
+       cv::Rect(x, y, w, h)   表示矩形区域
+       cv::Scalar(v1, v2, v3) 表示多个数值，如颜色或阈值
+  10. imread 读取失败时会返回空的 Mat，可以用 src.empty() 判断。
+      路径写错或文件不存在时程序不会自动报错，要养成检查 empty() 的习惯。
+  11. cv::Mat 中 rows 表示行数（图像高度），cols 表示列数（图像宽度）。
+      用 mat.at<cv::Vec3b>(y, x) 访问某个像素时，先写 y，再写 x。
+  12. cv::destroyAllWindows() 用来关闭所有 OpenCV 窗口，通常放在 waitKey 之后。
+  13. 若使用 using namespace cv; 可省略 cv:: 前缀；
+      但项目变大、多个库可能有重名时，建议保留 cv:: 前缀避免冲突。
+  14. findContours 里 hierarchy 的类型是 std::vector<cv::Vec4i>，
+      Vec4i 是 4 个 int 组成的向量，用来保存轮廓的父子层级关系；
+      只做简单颜色识别时，可以先不深入理解它。
+
+四、视频 / 摄像头速记
+  cv::VideoCapture cap(path)：用路径打开视频（或摄像头）。
+  cap.isOpened()：返回 bool，是否成功打开。
+  cap.get(cv::CAP_PROP_FRAME_WIDTH) / CAP_PROP_FRAME_HEIGHT：取视频的宽、高。
+  cap >> frame：从视频里取下一帧（每次调用前进一帧），读完或断开时 frame 为空。
+
+五、VideoWriter 与 writer.open 详解（保存视频）
+  ---------------------------------------------------------------------------
+  1. 作用
+     VideoWriter 用来把“一帧一帧的图像”写成视频文件，是 imwrite 的视频版。
+     视频没有“单张图”的概念，必须由程序逐帧喂进去：writer.write(frame)。
+
+  2. 代码结构（两段式）
+     第 1 步：定义空的 writer
+         cv::VideoWriter writer;
+     第 2 步：打开它，指定输出参数
+         cv::Size sz( width, height );
+         writer.open("result_video.avi",
+                     cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
+                     fps, sz);
+     之后循环里：
+         if (writer.isOpened()) writer.write(frame);   // 每帧写入
+     循环结束后：
+         if (writer.isOpened()) writer.release();      // 收尾，确保写盘
+
+  3. writer.open 的四个参数（顺序不能错）
+     open( filename, fourcc, fps, frameSize )
+       filename : 输出文件名（如 result_video.avi）。相对路径即可，别写死绝对路径。
+       fourcc   : 视频编码格式，用 4 个字符组成。常用：
+                    'M','J','P','G'  -> MJPG，兼容好、体积较大（推荐新手）
+                    'X','V','I','D'  -> XVID
+                    'H','2','6','4'  -> H264（部分环境缺编码器会失败）
+       fps      : 输出帧率（每秒帧数）。一般直接取输入视频的 fps。
+       frameSize: 输出分辨率，类型 cv::Size(width, height)。
+                  必须和 write() 喂进去的帧尺寸一致，否则写入无效或报错。
+
+  4. fourcc 为什么写成 4 个字母
+     FourCC = "Four Character Code"，用 4 个字符代表一种编码。
+     OpenCV 里用 cv::VideoWriter::fourcc('M','J','P','G') 把 4 个字符打包成一个整数。
+     写错字母或系统没有对应编码器，open 会失败（isOpened() 返回 false）。
+
+  5. 为什么要先判断 fps / 尺寸再 open
+     摄像头或某些源的 fps、宽、高可能取到 0 或负数，直接 open 会失败。
+     所以加条件：
+         if (fps > 0 && sz.width > 0 && sz.height > 0) writer.open(...);
+     这样参数非法时就跳过，不会出错。
+
+  6. 为什么 open 之后要 isOpened 再 write
+     open 可能因为编码器缺失、路径不可写而失败。
+     每帧写之前判断 if (writer.isOpened())，避免对未打开的 writer 写入导致崩溃。
+
+  7. release 很重要
+     VideoWriter 需要 release()（或析构）才会把视频文件的索引写完整。
+     不 release 直接结束，生成的视频可能无法播放。放在循环之后调用。
+
+  8. 常见坑
+     - 尺寸不匹配：write 的帧尺寸和 open 时给的 frameSize 不一致 -> 视频损坏或写不进。
+     - 忘记 release：文件末尾损坏，播放器打不开。
+     - 编码器缺失：H264 常常没装，换 MJPG 一般能用。
+     - 帧率给 0：视频时长计算异常，务必给正数（摄像头源建议设默认值如 25）。
+     - 彩色/灰度不一致：open 默认写彩色；若喂灰度图，最好用 open(..., isColor=false)。
+
+
+=============================================================================
+颜色识别学习代码（参考）
+添加时间：2026-09-15 23:24:34
+作用：演示使用 HSV 颜色空间识别绿色物体的大致流程，包括：
+  1. 读取图片并转换为 HSV；
+  2. 使用 inRange 提取绿色区域；
+  3. 使用形态学操作去除噪声；
+  4. 使用 findContours 查找连通区域；
+  5. 使用 contourArea 和 boundingRect 判断目标大小和位置；
+  6. 在原图上绘制矩形和文字。
+
+#include <opencv2/opencv.hpp>
+#include <vector>
+
+int main() {
+    cv::Mat src = cv::imread("D:/opencecpp/2025test1.png");
+
+    // 1. BGR 转 HSV
+    cv::Mat hsv;
+    cv::cvtColor(src, hsv, cv::COLOR_BGR2HSV);
+
+    // 2. 绿色大致范围
+    cv::Scalar lower(35, 50, 50);
+    cv::Scalar upper(85, 255, 255);
+
+    cv::Mat mask;
+    cv::inRange(hsv, lower, upper, mask);
+
+    // 3. 可选：去噪
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+    cv::erode(mask, mask, kernel);
+    cv::dilate(mask, mask, kernel);
+
+    // 4. 找连通区域
+    std::vector<std::vector<cv::Point>> contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(mask, contours, hierarchy,
+                     cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    // 5. 逐个判断并画框
+    for (size_t i = 0; i < contours.size(); ++i) {
+        double area = cv::contourArea(contours[i]);
+        if (area < 500) continue;
+
+        cv::Rect rect = cv::boundingRect(contours[i]);
+        cv::rectangle(src, rect, cv::Scalar(0, 255, 0), 2);
+        cv::putText(src, "green", cv::Point(rect.x, rect.y - 5),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                    cv::Scalar(0, 255, 0), 2);
+    }
+
+    cv::imshow("result", src);
+    cv::waitKey(0);
+    return 0;
+}
