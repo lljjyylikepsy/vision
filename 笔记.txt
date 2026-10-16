@@ -54,6 +54,14 @@ OpenCV 学习笔记
   14. findContours 里 hierarchy 的类型是 std::vector<cv::Vec4i>，
       Vec4i 是 4 个 int 组成的向量，用来保存轮廓的父子层级关系；
       只做简单颜色识别时，可以先不深入理解它。
+  15. 灰度图是“单通道”，彩色图是“三通道”。两者不能直接拼在一起。
+      灰度图要和彩色图横向拼接（hconcat）、纵向拼接（vconcat），
+      或叠加彩色标注（画框、写字）时，必须先把灰度转成三通道：
+          cv::cvtColor(gray, gray3, cv::COLOR_GRAY2BGR);   // gray3 是 3 通道
+      注意：
+        - COLOR_GRAY2BGR 只是把 1 个通道复制成 3 个，图像看起来还是灰的；
+        - 如果只是 imshow 单独显示灰度图，不需要转，单通道可以直接显示；
+        - 拼接要求“尺寸相同 + 通道数相同 + 数据类型相同”，否则报错。
 
 四、视频 / 摄像头速记
   cv::VideoCapture cap(path)：用路径打开视频（或摄像头）。
@@ -116,6 +124,324 @@ OpenCV 学习笔记
      - 编码器缺失：H264 常常没装，换 MJPG 一般能用。
      - 帧率给 0：视频时长计算异常，务必给正数（摄像头源建议设默认值如 25）。
      - 彩色/灰度不一致：open 默认写彩色；若喂灰度图，最好用 open(..., isColor=false)。
+
+
+六、struct Params 详解（把预处理参数集中管理）
+  ---------------------------------------------------------------------------
+  1. 长什么样（task3）
+       struct Params {
+           int    thresh    = 127;    // 二值化阈值（可配置）
+           int    morphSize = 5;      // 形态学核大小
+           double minArea   = 500.0;  // 轮廓最小面积，用于过滤小噪声
+       };
+
+  2. 它是什么
+     把整个预处理“会用到的可调旋钮”打包成一个小结构体。
+        thresh    -> cv::threshold(gray, binary, p.thresh, ...)
+        morphSize -> getStructuringElement(..., Size(p.morphSize, p.morphSize))
+        minArea   -> if (contourArea(c) >= p.minArea) 过滤噪声
+
+  3. 默认成员初始值（C++11 起）
+     “= 127” 表示不指定时用这个默认值：
+        Params p;   // p.thresh=127, p.morphSize=5, p.minArea=500.0
+
+  4. 怎么改
+        Params p;
+        if (argc >= 3) p.thresh = std::stoi(argv[2]);  // 命令行覆盖默认值
+     这样“默认能用 + 命令行临时改”，正好满足“阈值可配置”。
+
+  5. 怎么传
+        cv::Mat makeMask(const cv::Mat& src, const Params& p) { ... }
+     const Params& ：引用传递，不复制整个结构体（省开销），const 表示函数内不改它。
+
+  6. 为什么要用它（对比）
+     散着写：cv::threshold(gray, binary, 127, ...) 里 127 写死、散落各处，
+             想改要满文件找，而且等于“写死参数”，不符合考核要求。
+     用 Params：所有可调参数集中一处，函数间只传一个 p，入口改一次即可；
+             现场评委让你改阈值，改一处就能生效。
+
+  7. 一句话
+     Params = 把要调的旋钮集中放进一个小盒子：默认值保证能用，
+     命令行能覆盖，函数间传递只传这一个盒子。
+
+  8. 延伸：struct 和 class
+     C++ 里 struct 和 class 几乎一样，区别只在于：
+       struct 默认成员是 public，class 默认是 private。
+     只用来“装数据 + 少量逻辑”时，习惯用 struct。
+
+
+七、二值化的作用（threshold）
+  ---------------------------------------------------------------------------
+  1. 是什么
+     把灰度图（0~255 很多级）变成只有两种值的黑白图：
+         像素灰度 > 阈值  ->  255（白，前景）
+         像素灰度 <= 阈值 ->  0  （黑，背景）
+     代码：cv::threshold(grey, binary, 127, 255, cv::THRESH_BINARY);
+
+  2. 为什么这么做
+     (1) 把“连续的问题”变成“是/否的问题”：灰度有 256 种值太复杂，
+         二值化后只剩两种——这个像素属于目标吗？
+     (2) 分割：把目标从背景里抠出来（目标=白，背景=黑）。
+     (3) 铺路：findContours 只能处理单通道黑白图，它找的就是
+         “黑底上的白色连通区域”。不二值化就没法找轮廓。
+     (4) 减少计算量、抗一点光照干扰：处理 0/255 比 256 级灰度快，
+         合适阈值还能抹平阴影、反光的灰阶差异。
+
+  3. 关键：阈值
+     - 阈值选得好不好直接决定成败：
+         太低 -> 背景杂点也算目标（噪声多）
+         太高 -> 目标一部分丢失（目标不完整）
+     - 不同图片最佳阈值不同，所以考核要求“阈值可配置”（放进 Params）。
+
+  4. 一句话
+     二值化 = 用一条阈值线，把“灰度世界”砍成“黑白世界”，
+     让计算机只关心“是不是目标”，方便下一步找轮廓。
+
+
+八、任务3 题意：图像预处理流水线
+  ---------------------------------------------------------------------------
+  任务3 的 5 条要求不是孤立的，而是一条流水线，目的是把原图变成
+  “能用于识别”的干净形状信息：
+
+     原图
+      ├─① BGR/灰度/HSV 转换 -> 换“视角”（不同色彩空间方便不同任务）
+      ├─② 二值化 + 阈值      -> 砍成黑白，分离目标
+      ├─③ 形态学去噪        -> 擦掉小白点、补上小洞
+      ├─④ 轮廓查找          -> 找出目标的“边界”
+      └─⑤ 画中心/坐标轴/框  -> 标注结果，建立坐标系
+
+  逐条为什么需要：
+  ① 色彩空间转换
+     灰度：大多数几何处理（二值化、轮廓）只要亮度信息，最省事。
+     HSV ：颜色识别（任务4）在 HSV 里阈值更好定，H 对光照不敏感。
+  ② 二值化 + 阈值
+     把目标从背景里分出来（见第七节）。
+  ③ 形态学去噪
+     二值化后边缘有毛刺、画面有小白点。开运算（先腐蚀后膨胀）
+     擦掉小白点、保留大目标，让后面的轮廓更干净。
+  ④ 轮廓查找
+     findContours 在黑白图上找白色连通区域，每个区域给一圈边界点；
+     用 contourArea 过滤太小的（噪声），留下真正的目标。
+     轮廓是后续形状识别（任务5）的基础。
+  ⑤ 画中心、坐标轴、检测框
+     检测框(boundingRect)：标出目标在画面里的位置。
+     中心点：目标中心，常是要输出的“结果”。
+     坐标轴：明确坐标系方向（OpenCV 里 x 向右、y 向下，原点在左上角）。
+     考核反复强调“坐标系定义”，画出来才能讲清目标在哪个方向。
+
+  一句话：
+     任务3 = 搭好整条“图像处理流水线”：
+     换色彩空间 -> 二值化分离目标 -> 去噪 -> 找轮廓 -> 标注坐标系和位置。
+     它是后面颜色/形状/数字识别（任务4/5/6）的共同前置步骤。
+
+  为什么考试在意“坐标系”：
+     最终要控制电机让箭头对准靶板（任务11）。视觉要输出目标位置和角度，
+     坐标系方向搞错（比如 x 当 y），算出的角度就全错，电机转错方向。
+     所以“画中心/坐标轴”看着简单，其实是后面所有定位计算的根基。
+
+
+九、makeMask 逐行详解（二值化 + 形态学去噪）
+  添加时间：2026-10-16 21:30:59
+  ---------------------------------------------------------------------------
+  函数：
+      cv::Mat makeMask(const cv::Mat& img, const Params& p){
+          cv::Mat grey, binary;
+          cv::cvtColor(img, grey, cv::COLOR_BGR2GRAY);
+          cv::threshold(grey, binary, p.thresh, 255, cv::THRESH_BINARY);
+          cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT,
+                                                     cv::Size(p.morphSize, p.morphSize));
+          cv::morphologyEx(binary, binary, cv::MORPH_OPEN, kernel);
+          return binary;
+      }
+
+  1. 函数签名
+     cv::Mat makeMask(const cv::Mat& img, const Params& p)
+       - 返回 cv::Mat：返回处理好的二值掩膜（外面拿去显示/保存/找轮廓）。
+       - const cv::Mat& img：输入图像，引用传递（不复制像素），const 表示不改它。
+       - const Params& p：预处理参数（阈值、核大小），同样引用 + const。
+
+  2. cv::Mat grey, binary;
+     声明两个（空的）Mat：grey 放灰度图，binary 放二值图。
+
+  3. cv::cvtColor(img, grey, cv::COLOR_BGR2GRAY);
+     BGR 彩色图 -> 灰度图。二值化只需要亮度，所以先转灰度。
+
+  4. cv::threshold(grey, binary, p.thresh, 255, cv::THRESH_BINARY);
+     threshold 五个参数（顺序固定）：
+         threshold(src, dst, thresh, maxval, type)
+           src    : 输入，必须是单通道灰度图。
+           dst    : 输出，二值图。
+           thresh : 阈值（这里用 p.thresh，可配置）。
+           maxval : 满足条件时赋的值（这里 255 = 白）。
+           type   : 二值化方式。
+     THRESH_BINARY 规则：
+           像素 >  thresh  ->  maxval(255) 白
+           像素 <= thresh  ->  0          黑
+     常见 type：
+       THRESH_BINARY     : >thresh -> maxval，否则 0（最常用）
+       THRESH_BINARY_INV : 反过来，>thresh -> 0，否则 maxval（黑白互换）
+       THRESH_TRUNC      : >thresh 的截断成 thresh
+       THRESH_TOZERO     : <=thresh 的变 0
+       THRESH_OTSU       : 自动计算阈值（用 | 与上面组合，如 THRESH_BINARY|THRESH_OTSU）
+
+  5. cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT,
+                                                cv::Size(p.morphSize, p.morphSize));
+     构造“结构元素”（形态学核 kernel）：一个小形状模板，决定怎么腐蚀/膨胀。
+         getStructuringElement(shape, ksize)
+           shape : 核形状
+                     MORPH_RECT    矩形（最常用）
+                     MORPH_CROSS   十字形
+                     MORPH_ELLIPSE 椭圆形
+           ksize : 核大小 cv::Size(w, h)，这里宽高都等于 p.morphSize（5x5）。
+     核越大，去噪越猛，但目标也会被削得更多。
+
+  6. cv::morphologyEx(binary, binary, cv::MORPH_OPEN, kernel);
+     形态学操作：
+         morphologyEx(src, dst, op, kernel)
+           op = MORPH_OPEN（开运算）= 先腐蚀后膨胀。
+     四个基础概念：
+       腐蚀 erode : 白色区域“缩小”，去掉小白噪点、断开细连接。
+       膨胀 dilate: 白色区域“扩大”，填补小洞、连上断开处。
+       开运算 open : 先腐蚀后膨胀。去小白点/毛刺，大目标基本保留。
+       闭运算 close: 先膨胀后腐蚀。填补目标内部的小黑洞。
+     src 和 dst 都写 binary：原地处理（结果覆盖输入）。
+     kernel 决定操作力度。
+
+  7. return binary;
+     返回处理好的二值掩膜（单通道黑白图），外面可用于 findContours。
+
+  8. 一句话
+     makeMask = 灰度化 -> 阈值二值化 -> 开运算去噪 -> 返回黑白掩膜。
+
+
+十、findTargets 逐行详解（轮廓查找 + 过滤）
+  添加时间：2026-10-16 21:57:39
+  ---------------------------------------------------------------------------
+  函数：
+      std::vector<std::vector<cv::Point>> findTargets(const cv::Mat& mask, const Params& p) {
+          std::vector<std::vector<cv::Point>> contours;
+          cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+          std::vector<std::vector<cv::Point>> kept;
+          for (const auto& c : contours) {
+              if (cv::contourArea(c) >= p.minArea) kept.push_back(c);
+          }
+          return kept;
+      }
+
+  1. 函数签名
+     std::vector<std::vector<cv::Point>> findTargets(const cv::Mat& mask, const Params& p)
+       - 返回“轮廓列表”，类型是二维嵌套的：
+           外层 vector        -> 多条轮廓
+           内层 vector<Point> -> 一条轮廓上的一串点
+       - const cv::Mat& mask ：输入，黑白掩膜。
+       - const Params& p    ：参数（用里面的 minArea）。
+
+  2. std::vector<std::vector<cv::Point>> contours;
+     声明一个空的轮廓列表，等下装 findContours 的结果。
+
+  3. cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+     4 参数版本（不带 hierarchy）：
+         findContours( image, contours, mode, method )
+           image   : 输入图，必须 8 位单通道黑白图，且“黑底白目标”。
+                     用 mask.clone()，因为 findContours 可能改动输入，传副本稳妥。
+           contours: 输出，装找到的轮廓。
+           mode    : 轮廓检索模式。
+           method  : 轮廓点压缩方式。
+
+     检索模式 mode（RETR_*）：
+       RETR_EXTERNAL : 只找最外层轮廓（最常用，忽略内部嵌套）。
+       RETR_LIST     : 找所有轮廓，不建立父子关系。
+       RETR_CCOMP    : 两层结构（外轮廓 + 内孔）。
+       RETR_TREE     : 完整树状层级（父子孙都有）。
+
+     点压缩方式 method（CHAIN_APPROX_*）：
+       CHAIN_APPROX_NONE   : 存轮廓上所有点（最全但最占内存）。
+       CHAIN_APPROX_SIMPLE : 只存拐点，直线段中间的点省略（最常用）。
+
+  4. std::vector<std::vector<cv::Point>> kept;
+     装“过滤后”要保留的轮廓。
+
+  5. 过滤循环
+         for (const auto& c : contours) {
+             if (cv::contourArea(c) >= p.minArea) kept.push_back(c);
+         }
+       - for (const auto& c : contours)：遍历每条轮廓。
+           const auto& = 引用遍历（不复制点），const 表示不改它。
+       - cv::contourArea(c)：算这条轮廓的面积。
+       - >= p.minArea：面积够大才保留（过滤太小的噪声轮廓），
+           这里用上了 Params 的第 3 个成员 minArea。
+       - kept.push_back(c)：存进结果。
+
+  6. return kept;
+     返回过滤后的目标轮廓列表。
+
+  7. 一句话
+     findTargets = 在黑底白目标的掩膜上找最外层轮廓，
+     再用面积过滤掉小噪声，返回真正的目标轮廓。
+
+
+十一、drawOverlay 逐行详解（画中心/坐标轴/检测框）
+  添加时间：2026-10-17 00:09:03
+  ---------------------------------------------------------------------------
+  函数：
+      void drawOverlay(cv::Mat& img, const std::vector<std::vector<cv::Point>>& targets) {
+          cv::Point center(img.cols / 2, img.rows / 2);
+          cv::circle(img, center, 5, cv::Scalar(0, 0, 255), -1);
+          cv::arrowedLine(img, center, cv::Point(center.x + 60, center.y),
+                          cv::Scalar(0, 0, 255), 2);
+          cv::arrowedLine(img, center, cv::Point(center.x, center.y + 60),
+                          cv::Scalar(0, 255, 0), 2);
+          for (const auto& c : targets) {
+              cv::rectangle(img, cv::boundingRect(c), cv::Scalar(0, 255, 0), 2);
+          }
+      }
+
+  1. 函数签名（关键点）
+     void drawOverlay(cv::Mat& img, const std::vector<std::vector<cv::Point>>& targets)
+       - cv::Mat& img ：注意不是 const！绘制函数会直接改动这张图（画上去），
+                        必须用非 const 引用，改动才反映到外面。
+                        正因为会改图，processImage 里先 img.clone() 再画，不破坏原图。
+       - const ...& targets ：轮廓列表，只读，所以 const。
+
+  2. cv::Point center(img.cols / 2, img.rows / 2);
+     取图像中心。cols=宽，rows=高，所以 center.x=宽/2，center.y=高/2。
+
+  3. cv::circle(img, center, 5, cv::Scalar(0, 0, 255), -1);
+     画图像中心点：circle(img, 圆心, 半径, 颜色, 粗细)
+       圆心 center，半径 5，颜色 Scalar(0,0,255)=红色(BGR)。
+       粗细 -1 = 填充(实心圆)；正数 = 只画轮廓线，数字是线宽。
+
+  4. cv::arrowedLine(img, center, cv::Point(center.x + 60, center.y),
+                     cv::Scalar(0, 0, 255), 2);
+     画 x 轴：arrowedLine(img, 起点, 终点, 颜色, 粗细)
+       起点=中心，终点=中心向右 60 像素 -> x 正方向向右。红色。
+
+  5. cv::arrowedLine(img, center, cv::Point(center.x, center.y + 60),
+                     cv::Scalar(0, 255, 0), 2);
+     画 y 轴：终点=中心向下 60 像素 -> y 正方向向下。绿色。
+     ! 坐标系关键：OpenCV 原点在左上角，x 向右，y 向下。
+       所以 +x 向右、+y 向下——这就是考核强调的“坐标系定义”。
+
+  6. 画检测框
+         for (const auto& c : targets) {
+             cv::rectangle(img, cv::boundingRect(c), cv::Scalar(0, 255, 0), 2);
+         }
+       遍历每个目标轮廓 c：
+         cv::boundingRect(c) -> 求轮廓的轴对齐外接矩形(Rect，含 x,y,w,h)。
+         cv::rectangle(img, 矩形, 颜色, 粗细) -> 画检测框，绿色，线宽 2。
+       参数也给两个对角 Point 的另一种写法。
+
+  7. 三个绘图函数参数速记
+       circle(img, center, radius, color, thickness)   圆心、半径、颜色、粗细(-1=实心)
+       arrowedLine(img, pt1, pt2, color, thickness)    起点、终点、颜色、粗细
+       rectangle(img, rect, color, thickness)          矩形、颜色、粗细
+     共同点：都直接修改 img（参数不能 const），颜色用 Scalar(BGR)，
+             粗细整数（-1=填充）。
+
+  8. 一句话
+     drawOverlay = 在图上画中心点、坐标轴(x右y下)、以及每个目标的检测框，
+     直接改图，所以调用前要 clone。
 
 
 =============================================================================
