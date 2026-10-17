@@ -81,7 +81,6 @@ cv::Mat makeMask(const cv::Mat& img, const Params& p){
 std::vector<std::vector<cv::Point>> findTargets(const cv::Mat& mask, const Params& p) {
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
     std::vector<std::vector<cv::Point>> kept;
     for (const auto& c : contours) {
         if (cv::contourArea(c) >= p.minArea) kept.push_back(c);
