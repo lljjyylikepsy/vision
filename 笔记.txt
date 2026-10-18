@@ -641,6 +641,83 @@ OpenCV 学习笔记
      核越大(7x7、9x9)，去噪/补洞越猛，但目标也会被削得更多。5x5 是常用起点。
 
 
+十五、数字识别新增内容（hierarchy / 缩放 / Tesseract）
+  添加时间：2026-10-18 11:15:24
+  （只记之前没讲过的；hierarchy 类型见三.14，RETR_TREE 名字见第十节）
+  ---------------------------------------------------------------------------
+  1. hierarchy 怎么用（新）
+     cv::Vec4i 是 4 个 int，含义固定：
+         hier[i] = [ next, previous, firstChild, parent ]
+                     [0]     [1]        [2]       [3]
+       hier[i][3] = 父轮廓下标，-1 表示没有父（顶层）。
+     在“形状内部有数字”的图里：形状是顶层(parent=-1)，数字是形状内部的孔洞(子轮廓)。
+     挑数字的判据：
+         int parent = hier[i][3];
+         if (parent >= 0 && hier[parent][3] == -1) idx.push_back(i);
+       意思：我有父轮廓，且我爹是顶层 -> 我是形状里面的孔洞 -> 是数字。
+
+  2. cv::copyMakeBorder（新）
+     cv::copyMakeBorder(big, pad, 20, 20, 20, 20, cv::BORDER_CONSTANT, cv::Scalar(255));
+       - 作用：给图像四周加边框。
+       - 参数：(输入, 输出, 上, 下, 左, 右, 边框类型, 颜色)。
+       - 这里加 20 像素白边，因为 Tesseract 贴着边缘的文字识别率差。
+
+  3. cv::resize（新）
+     double scale = 100.0 / roi.rows;
+     cv::resize(roi, big, cv::Size(), scale, scale, cv::INTER_LINEAR);
+       - 作用：缩放图像。
+       - dsize 传 cv::Size()（空），改用 fx/fy 缩放倍数。
+       - INTER_LINEAR：双线性插值，放大后边缘平滑。
+       - 为什么要放大：Tesseract 对字高 30~100 像素最敏感，小字识别率低。
+
+  4. cv::format（新）
+     std::string text = cv::format("%d (%.0f)", label, conf);
+       - 和 printf 一样用格式串，但返回 std::string。
+       - 比 snprintf + char[] 简洁，不用管缓冲区大小。
+
+  5. Tesseract 调用流程（全新增）
+     tesseract::TessBaseAPI api;                           // 1 创建 OCR 引擎对象
+     api.Init(NULL, "eng");                                // 2 初始化，用英文模型；NULL=默认 tessdata 路径
+     api.SetPageSegMode(tesseract::PSM_SINGLE_CHAR);       // 3 告诉它“这里只有一个字符”
+     api.SetVariable("tessedit_char_whitelist", "0123456789");  // 4 只允许识别 0-9
+     api.SetImage(pad.data, pad.cols, pad.rows, 1, static_cast<int>(pad.step)); // 5 送入图像
+     char* txt = api.GetUTF8Text();                        // 6 识别，返回文本
+     int conf = api.MeanTextConf();                        // 7 平均置信度 0~100
+     api.Clear();                                          // 8 清掉上一次的识别状态
+     delete[] txt;                                         // 9 释放返回的 C 字符串
+     关键点：
+       Init(NULL,"eng")     : 第一个参数是 tessdata 目录，NULL 用系统默认。
+       PSM_SINGLE_CHAR      : 页面分割模式，当成单个字符。
+       whitelist            : 白名单，限定只输出 0-9，避免识别成字母。
+       SetImage 5 个参数    : (数据指针, 宽, 高, 通道数, 每行字节数)。
+       MeanTextConf()       : 返回 0~100，不是 0~1。
+       Clear()              : 每次识别后调用，否则状态累积。
+
+  6. 可选依赖（新）
+     CMake：
+         find_package(PkgConfig QUIET)
+         if (PkgConfig_FOUND)
+             pkg_check_modules(TESSERACT QUIET tesseract)
+         endif()
+         if (TESSERACT_FOUND)
+             target_link_libraries(task6 ${TESSERACT_LIBRARIES})
+             target_compile_definitions(task6 PRIVATE HAVE_TESSERACT)
+         endif()
+     代码：
+         #ifdef HAVE_TESSERACT
+         #include <tesseract/baseapi.h>
+         #endif
+     效果：别的机器没装 Tesseract 也照样编译通过，只是 label=-1（识别失败），不崩。
+
+  7. 置信度
+     MeanTextConf() 返回 0~100 的整数。这里 confMin=50.0，低于 50 判为识别失败。
+     实测该图 96~97。注意它和模板匹配的 0~1 不同，别混用阈值。
+
+  8. 一句话
+     数字识别链路：Otsu 二值化 -> 用 hierarchy 取“形状内部的孔洞”当数字区域
+     -> 放大 + 加白边 -> Tesseract(单字符+白名单) -> 输出 label/center/confidence。
+
+
 =============================================================================
 颜色识别学习代码（参考）
 添加时间：2026-09-15 23:24:34
