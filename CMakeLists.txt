@@ -15,3 +15,6 @@ target_link_libraries(task3 ${OpenCV_LIBS})
 
 add_executable(task4 src/task4.cpp)
 target_link_libraries(task4 ${OpenCV_LIBS})
+
+add_executable(task5 src/task5.cpp)
+target_link_libraries(task5 ${OpenCV_LIBS})
