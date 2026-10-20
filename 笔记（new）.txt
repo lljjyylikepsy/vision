@@ -1,0 +1,892 @@
+OpenCV 视觉笔记（按功能分类）
+================================================================================
+
+目录
+  1  图像与 Mat 基础
+  2  图像读写（imread / imwrite）
+  3  色彩空间（BGR / 灰度 / HSV / HLS / Lab）
+  4  二值化与阈值
+  5  形态学（腐蚀 / 膨胀 / 开 / 闭）
+  6  轮廓与几何特征
+  7  绘图与标注
+  8  颜色识别（任务4）
+  9  形状识别（任务5）
+  10 数字识别与 OCR（任务6）
+  11 图像预处理流水线（任务3）
+  12 视频与摄像头
+  13 命令行与程序结构（C++）
+  14 工程与构建（CMake / common.hpp）
+  15 踩坑速查表
+  16 任务与实现对应关系
+  附录 颜色识别示例代码
+
+
+================================================================================
+1  图像与 Mat 基础
+================================================================================
+
+1.1 Mat 是什么
+  cv::Mat 是二维像素矩阵容器，自动管理内存（引用计数）。
+  常用成员：
+     rows, cols   行数(高)、列数(宽)
+     channels()   通道数（灰度 1，彩色 3）
+     type()       类型编码（如 CV_8UC3）
+     depth()      数据类型（如 CV_8U）
+     empty()      是否为空
+     total()      像素总数 = rows * cols
+  注意：cols = 宽，rows = 高；和 Size(w, h) 的书写顺序相反。
+
+1.2 常见数据类型
+     CV_8UC1    单通道 8 位   （灰度图、掩膜）
+     CV_8UC3    三通道 8 位   （BGR 彩色图）
+     CV_32FC1   单通道 32 位浮点（matchTemplate 的相似度结果）
+  命名规则：CV_<位数><类型>C<通道数>，如 CV_8UC3 = 8 位无符号三通道。
+
+1.3 浅拷贝 vs 深拷贝
+     Mat b = a;           // 浅拷贝：b 与 a 共用同一份像素，计数 +1
+     Mat b = a.clone();   // 深拷贝：独立像素，互不影响
+     a.copyTo(b);         // 深拷贝（可带掩膜只复制部分区域）
+  正因为浅拷贝便宜，函数参数常用 const Mat& 避免复制像素。
+
+1.4 像素访问 at<T>(y, x)
+     灰度图： img.at<uchar>(y, x)
+     彩色图： img.at<cv::Vec3b>(y, x)    // Vec3b = 3 个 uchar = (B,G,R)
+  注意：先写 y（行）再写 x（列），和数学里的 (x,y) 相反。
+  越界：at<> 默认不做边界检查，越界会读脏数据或崩溃。
+
+1.5 ROI（感兴趣区域）是“视图”，不是拷贝
+     cv::Mat roi = img(cv::Rect(x, y, w, h));
+     roi.setTo(cv::Scalar(0, 0, 0));    // 原图对应区域也会变黑
+  想独立就 roi.clone()。
+
+1.6 CV_8U 会溢出回绕
+  0~255 之外的加减会 mod 256。
+  需要安全饱和转换时用 cv::saturate_cast<uchar>(value)。
+
+1.7 常用小结构体
+     cv::Point(x, y)         整数坐标点
+     cv::Point2f(x, y)       float 坐标点（亚像素，重心常用）
+     cv::Size(w, h)          宽、高
+     cv::Rect(x, y, w, h)    左上角坐标 + 宽高
+     cv::Scalar(v1,v2,v3,v4) 多值容器（颜色/阈值），BGR 顺序
+     cv::Vec3b               3 个 uchar（像素容器）
+  区别：Vec3b 是“像素容器”，配 at<> 读写；Scalar 是“参数容器”，传颜色/阈值。
+
+1.8 可选：using namespace cv
+  可以省略 cv:: 前缀；但项目变大、多个库重名时，建议保留 cv:: 前缀。
+
+
+================================================================================
+2  图像读写（imread / imwrite）
+================================================================================
+
+2.1 imread
+     cv::Mat img = cv::imread("路径", flags);
+  flags：
+     cv::IMREAD_COLOR       默认，读成 3 通道 BGR（丢掉透明通道）
+     cv::IMREAD_GRAYSCALE   直接读成单通道灰度图
+     cv::IMREAD_UNCHANGED   保留原样（含 alpha，可能是 4 通道）
+  读失败返回空 Mat，不会抛异常，必须用 img.empty() 判断。
+
+2.2 imwrite
+     bool ok = cv::imwrite("路径", img);
+  返回 bool：成功 true，失败 false。
+  扩展名决定保存格式（.png 无损 / .jpg 有损）。
+
+2.3 常见错误处理顺序
+  先判断路径是否存在 -> 再 imread -> 再判断 empty()。
+  路径不存在时 imread 不报错只返回空，所以 exists 检查要单独做。
+
+
+================================================================================
+3  色彩空间（BGR / 灰度 / HSV / HLS / Lab）
+================================================================================
+
+3.1 转换函数
+     cv::cvtColor(src, dst, code);
+  常用 code：
+     cv::COLOR_BGR2GRAY    BGR -> 灰度
+     cv::COLOR_BGR2HSV     BGR -> HSV
+     cv::COLOR_GRAY2BGR    灰度 -> 三通道（拼图/叠加彩色标注前用）
+     cv::COLOR_BGR2RGB     BGR -> RGB（给其它库用时）
+
+3.2 BGR 顺序
+  OpenCV 默认 BGR，不是 RGB。
+  Scalar(0, 0, 255) 在 BGR 图里是红色（第三个才是红）。
+
+3.3 OpenCV 的 HSV 范围
+     H : 0~179   （常见教程是 0~360，OpenCV 为存进 8 位把 H 除以 2）
+     S : 0~255
+     V : 0~255
+  换算：OpenCV_H = 角度 / 2。例：红 0°->H0，绿 120°->H60，蓝 240°->H120。
+  最大的坑：H 阈值不能超过 179，否则全错。
+
+3.4 HSV 颜色表（OpenCV 值）
+     红色：  H 0~10  和 H 170~179（跨色相环两端，需要两段）
+     橙色：  H 11~25
+     黄色：  H 26~34
+     绿色：  H 35~85
+     青色：  H 86~99
+     蓝色：  H 100~124
+     紫色：  H 125~155
+     粉色：  H 156~169
+  通常 S 和 V 下界取 50（或 100），用来排除白、黑、太暗的像素。
+
+3.5 三个分量含义
+     H 色相：是什么颜色（红/黄/绿…），色相环
+     S 饱和度：颜色纯不纯（高=鲜艳，低=灰白）
+     V 明度：亮不亮（低=暗、接近黑）
+
+3.6 为什么颜色识别用 HSV 而不用 BGR
+  BGR 里颜色和亮度混在一起：同一块红布，亮处 (50,50,220)、暗处 (20,20,90)，
+  光照一变数值差很多，很难用固定范围框住。
+  HSV 把“颜色(H)”和“亮度(V)”解耦：同一块红布 H 几乎不变，
+  光照主要影响 V。所以光照变化时仍能稳定识别颜色。
+
+3.7 红色为什么要两段
+  红色在色相环首尾相接：一端 H≈0~10，另一端 H≈170~179。
+  要分别 inRange 得到两张掩膜，再用 bitwise_or 合并。
+
+3.8 其它色彩空间
+     HLS：H 色相、L 亮度、S 饱和度（亮度定义不同）
+     Lab：L 亮度、a 绿-红、b 蓝-黄（接近人眼感知，常用色差比较）
+  颜色识别仍首选 HSV：H 独立于亮度，阈值直观。
+
+3.9 阈值调参经验
+  目标没识别全   -> 放宽 H 范围（上下各扩 3~5）
+  混入别的东西   -> 收紧 H 范围
+  混入白色/灰色  -> 提高 S 下界
+  混入黑色/阴影  -> 提高 V 下界
+  亮处/暗处不稳  -> 主要看 H（更稳），适当放宽 V
+
+3.10 怎么实测某个像素的 HSV（校准）
+     cv::Mat hsv;
+     cv::cvtColor(img, hsv, cv::COLOR_BGR2HSV);
+     cv::Vec3b p = hsv.at<cv::Vec3b>(y, x);
+     std::cout << (int)p[0] << "," << (int)p[1] << "," << (int)p[2];
+  把鼠标/笔尖指到目标上，读出的值就是实际 H/S/V。
+
+3.11 光照的极限
+  过曝（全白）和欠曝（全黑）时 S/V 已无信息，H 也不可靠，
+  任何颜色识别都会失败，只能靠控制曝光。
+
+
+================================================================================
+4  二值化与阈值
+================================================================================
+
+4.1 二值化是什么、为什么
+    像素灰度 >  阈值 -> 255（白，前景）
+    像素灰度 <= 阈值 -> 0  （黑，背景）
+  作用：
+    (1) 把连续的灰度问题变成“是/否”问题
+    (2) 把目标从背景中分割出来
+    (3) 为 findContours 铺路（它只吃单通道黑白图）
+    (4) 减少计算量、抹平部分光照差异
+  二值化前必须先转灰度（threshold 只接受单通道）。
+
+4.2 threshold 五参数
+     cv::threshold(src, dst, thresh, maxval, type);
+       src    : 输入，必须单通道灰度图
+       dst    : 输出二值图
+       thresh : 阈值
+       maxval : 满足条件时赋的值（通常 255）
+       type   : 阈值类型
+
+4.3 阈值类型
+     THRESH_BINARY     : >thresh -> maxval，否则 0（最常用）
+     THRESH_BINARY_INV : 反过来，>thresh -> 0，否则 maxval
+     THRESH_TRUNC      : >thresh 的截断为 thresh
+     THRESH_TOZERO     : <=thresh 变 0
+     THRESH_TOZERO_INV : >thresh 变 0
+
+4.4 什么时候用 INV
+  目标是暗色、背景是亮色时，BINARY 会得到“背景白”，
+  用 BINARY_INV 让目标变白，findContours 才找得到目标。
+
+4.5 Otsu 自动阈值
+     cv::threshold(grey, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+  thresh 写 0，Otsu 自动找“类间方差最大”的阈值。
+  适合直方图有明显双峰的图（深色目标 + 浅色背景）。
+
+4.6 自适应阈值 adaptiveThreshold
+     cv::adaptiveThreshold(grey, dst, 255,
+         cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY, 11, 2);
+  每个像素用邻域均值/高斯加权算阈值，适合光照不均匀的图。
+  blockSize 必须奇数（邻域大小）；C 是从均值里减掉的常数。
+
+4.7 阈值选得对不对
+  太低 -> 背景杂点也算目标（噪声多）
+  太高 -> 目标一部分丢失（目标不完整）
+  不同图片最佳阈值不同 -> 所以考核要求“阈值可配置”。
+
+
+================================================================================
+5  形态学（腐蚀 / 膨胀 / 开 / 闭）
+================================================================================
+
+5.1 基础操作
+     腐蚀 erode  : 白色区域缩小 -> 去掉小白噪点、断开细连接
+     膨胀 dilate : 白色区域扩大 -> 填补小洞、连上断开处
+
+5.2 组合操作 morphologyEx
+     cv::morphologyEx(src, dst, op, kernel);
+  op：
+     MORPH_OPEN     先腐蚀后膨胀 -> 去小白点、毛刺
+     MORPH_CLOSE    先膨胀后腐蚀 -> 补目标内部小黑洞
+     MORPH_GRADIENT 膨胀 - 腐蚀   -> 目标边缘（粗边缘检测）
+     MORPH_TOPHAT   原图 - 开运算 -> 提取小亮点
+     MORPH_BLACKHAT 闭运算 - 原图 -> 提取小暗点
+  erode + dilate == MORPH_OPEN；dilate + erode == MORPH_CLOSE。
+
+5.3 结构元素（核）
+     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+  shape：
+     MORPH_RECT    矩形（默认，去方形噪声好）
+     MORPH_ELLIPSE 椭圆（边缘更圆滑）
+     MORPH_CROSS   十字（保留细线）
+  ksize：一般取奇数。3x3 轻微，5x5 常用，7x7 以上很猛（小目标会消失）。
+
+5.4 进阶参数
+     cv::morphologyEx(src, dst, op, kernel, cv::Point(-1,-1), 2);
+     iterations：迭代次数，2 次相当于加强效果
+     anchor    ：核的锚点，默认 (-1,-1) = 中心
+     borderType：边界处理，默认 BORDER_CONSTANT，可用 BORDER_REPLICATE
+
+5.5 为什么先开运算再闭运算
+  二值化后的噪声是“零散小白点”，缺陷是“目标内部小黑洞”。
+  先开：清掉小白点；后闭：补上小黑洞。顺序对应“先除噪，再补洞”。
+  反过来（先闭）：
+     先膨胀会把小白噪声放大，若靠近目标会直接粘上去，
+     再腐蚀也分不开，目标边缘留下凸起，后面开运算也清不干净。
+  一句话：开运算去掉不该有的白，闭运算补上不该有的黑。
+
+5.6 什么时候只用一种
+  只有小白点噪声 -> 只开运算
+  只有黑洞       -> 只闭运算
+  两者都有       -> 先开后闭
+
+
+================================================================================
+6  轮廓与几何特征
+================================================================================
+
+6.1 findContours
+     cv::findContours(image, contours, mode, method);
+     cv::findContours(image, contours, hierarchy, mode, method);
+  image   : 8 位单通道黑白图，且“黑底白目标”
+  contours: 输出，类型 std::vector<std::vector<cv::Point>>
+            外层 = 多条轮廓，内层 = 一条轮廓的点序列
+  hierarchy: 输出，类型 std::vector<cv::Vec4i>
+  注意：某些版本会修改输入图，稳妥起见传 image.clone()。
+
+6.2 检索模式 mode
+     RETR_EXTERNAL 只找最外层轮廓（最常用）
+     RETR_LIST     找所有轮廓，不建立父子关系
+     RETR_CCOMP    两层结构（外轮廓 + 内孔）
+     RETR_TREE     完整树状层级（父子孙都有）
+
+6.3 点压缩方式 method
+     CHAIN_APPROX_NONE   存轮廓上所有点（最全、最占内存）
+     CHAIN_APPROX_SIMPLE 只存拐点，直线段中间点省略（最常用）
+
+6.4 hierarchy 的四个数
+     hier[i] = [ next, previous, firstChild, parent ]
+                 [0]     [1]        [2]       [3]
+   parent = -1 表示顶层（没有父轮廓）。
+  “找形状内部的数字”判据：
+     int parent = hier[i][3];
+     if (parent >= 0 && hier[parent][3] == -1) -> 我是形状内部的孔洞
+
+6.5 轮廓面积与外接矩形
+     cv::contourArea(contour)     轮廓围成的实际面积
+     cv::boundingRect(contour)    轴对齐外接矩形 Rect(x,y,w,h)
+  两者不同：外接矩形面积 = w*h，倾斜目标差很多。
+
+6.6 重心 moments
+     cv::Moments m = cv::moments(contour);
+     cx = m.m10 / m.m00;
+     cy = m.m01 / m.m00;
+  m.m00 = 面积（零阶矩）；m.m10 / m.m01 = 一阶矩。
+  必须先判 m.m00 != 0（面积 0 不能做除数）。
+  重心是形状的“质量中心”，比外接框中心更准（尤其不规则形状）。
+
+6.7 最小外接圆与填充率
+     float radius = 0;
+     cv::Point2f mc;
+     cv::minEnclosingCircle(contour, mc, radius);
+     double fill = cv::contourArea(contour) / (CV_PI * radius * radius);
+  填充率判断形状（旋转不变、对边缘锯齿不敏感）：
+     圆 ≈ 1.0
+     正方形 ≈ 0.64（2/π）
+     三角形 ≈ 0.4
+  比“圆形度 4πA/P²”更稳，因为不受周长锯齿影响。
+
+6.8 多边形逼近 approxPolyDP
+     cv::approxPolyDP(contour, approx, epsilon, true);
+  epsilon 越大顶点越少；常用 epsilon = 0.02 * arcLength(contour, true)。
+  用途：数顶点判断三角形(3)/四边形(4)/五边形(5)。
+
+6.9 周长 arcLength
+     double peri = cv::arcLength(contour, true);   // true = 闭合轮廓
+
+6.10 凸包与凹陷
+     std::vector<cv::Point> hull;
+     cv::convexHull(contour, hull);
+     std::vector<int> hullIdx;
+     cv::convexityDefects(contour, hullIdx, defects);
+  凸包 = 把轮廓“绷紧”的多边形；凹陷可识别星形、箭头。
+
+6.11 findNonZero
+     std::vector<cv::Point> pts;
+     cv::findNonZero(binary, pts);
+     cv::Rect box = cv::boundingRect(pts);
+  找出所有非零像素坐标，常用于求内容的紧致外接框。
+
+6.12 面积过滤经验
+  < 100 多为噪点；占画面 1% 以上通常是真目标。
+  经验阈值要随分辨率调整。
+
+
+================================================================================
+7  绘图与标注
+================================================================================
+
+7.1 常用绘图函数
+     cv::circle(img, center, radius, color, thickness);
+     cv::line(img, p1, p2, color, thickness);
+     cv::rectangle(img, rect, color, thickness);
+     cv::rectangle(img, p1, p2, color, thickness);
+     cv::arrowedLine(img, pt1, pt2, color, thickness);
+     cv::ellipse(img, center, axes, angle, startAngle, endAngle, color, thickness);
+     cv::fillPoly(img, pts, color);
+     cv::putText(img, text, org, fontFace, fontScale, color, thickness);
+
+7.2 参数要点
+   thickness：整数线宽；-1 表示填充（用于 circle 等）
+   color    ：Scalar(B,G,R)，Scalar(0,0,255)=红、Scalar(0,255,0)=绿
+   lineType ：LINE_8（默认快）、LINE_AA（抗锯齿，平滑）
+   越界     ：绘图函数会自己裁剪，不会崩
+
+7.3 putText
+     cv::putText(img, "valid=1", cv::Point(10, 30),
+                 cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0,255,0), 2);
+     1 img        要写的图
+     2 "valid=1"  文本
+     3 Point(10,30) 文本左下角（默认）
+     4 FONT_HERSHEY_SIMPLEX 字体
+     5 0.8        字体缩放
+     6 颜色        BGR
+     7 2          线宽
+  第 8 个参数 bottomLeftOrigin=true 时 org 表示左上角。
+
+7.4 会改图，所以参数不能是 const
+  cv::Mat& img 必须非 const，绘制是原地修改。
+  想保留原图：先 img.clone() 再画。
+
+7.5 坐标系（重点）
+  OpenCV 原点在左上角，x 向右，y 向下。
+     x 轴：从中心指向 center.x + 60（右），红色
+     y 轴：从中心指向 center.y + 60（下），绿色
+  坐标系方向搞错，后面所有角度计算都会错。
+
+
+================================================================================
+8  颜色识别（任务4）
+================================================================================
+
+8.1 核心函数 inRange
+     cv::inRange(hsv, lower, upper, mask);
+  逐像素、逐通道、闭区间判断：
+     三个通道都满足 lower <= 值 <= upper -> 255（白）
+     否则                                -> 0  （黑）
+  mask 是单通道黑白图，白 = 目标，黑 = 非目标。
+
+8.2 合并红色两段
+     cv::inRange(hsv, lo1, hi1, mask);
+     cv::inRange(hsv, lo2, hi2, mask2);
+     cv::bitwise_or(mask, mask2, mask);      // 任一为白则白
+
+8.3 颜色名 -> HSV 范围（可配置）
+     bool getColorRange(const std::string& name,
+                        cv::Scalar& lo1, cv::Scalar& hi1,
+                        cv::Scalar& lo2, cv::Scalar& hi2, bool& hasSecond);
+  用 if/else 查表，红色 hasSecond=true。颜色名不认识返回 false。
+  这样“考官重新指定颜色”只需换字符串，不写死。
+
+8.4 完整流程
+   BGR -> HSV -> inRange -> 形态学(先开后闭) -> findContours
+   -> 选面积最大的目标 -> moments 求重心 -> 输出 label/center/valid
+
+8.5 输出约定
+     找到：valid=1; center=(x,y); area=...
+     没找到：valid=0（不保留上一帧坐标）
+  负样本判断是评分点，不能持续输出旧目标。
+
+8.6 常见问题
+  多个同色目标：遍历所有轮廓，或按面积取最大。
+  颜色相近：收紧 H、提高 S 下界。
+  光照不均：提高 V 下界，或改用 Otsu/自适应阈值辅助。
+
+
+================================================================================
+9  形状识别（任务5）
+================================================================================
+
+9.1 总体思路
+  不依赖颜色，走“灰度 + Otsu + 形态学 + 轮廓 + 几何特征”。
+  几何特征必须是旋转/位置不变的（不能用绝对坐标）。
+
+9.2 极性自适应
+  Otsu 后判断图像边框是否以白为主：
+     若边框大部分是白 -> 背景是白的 -> bitwise_not 反相
+  保证最终是“黑底白目标”，findContours 才正确。
+
+9.3 判圆：填充率
+     fill = contourArea / (CV_PI * radius * radius)
+     圆 ≈ 1.0，正方形 ≈ 0.64，三角形 ≈ 0.4
+  阈值取 0.85 即可区分圆与非圆。
+
+9.4 判三角形 / 四边形：顶点数
+     cv::approxPolyDP(contour, approx, 0.02 * arcLength, true);
+     n = approx.size();
+     n==3 -> 三角形；n==4 -> 矩形
+  旋转后顶点数不变，所以是旋转不变的。
+  区分正方形和长方形用 minAreaRect 的长宽比（不要用 boundingRect，
+  轴对齐矩形会随旋转变形）。
+
+9.5 为什么不用圆形度 4πA/P²
+  轮廓边缘有锯齿时周长被撑大，圆形度会偏低（实测圆只有 0.896），
+  和矩形(0.785)太接近，容易误判。填充率差距大得多。
+
+9.6 多目标
+  遍历所有面积达标的轮廓，每个都分类 + 求中心，结果放进 vector。
+
+9.7 输出
+     每个目标：label（triangle/rectangle/circle）、center、area
+     画：中心点 + 文字标签
+
+9.8 稳定性经验
+  先开后闭让轮廓更干净；minArea 太大会漏目标，太小会把噪点当目标。
+  旋转、平移不影响结果（只用了顶点数、填充率、面积）。
+
+
+================================================================================
+10  数字识别与 OCR（任务6）
+================================================================================
+
+10.1 场景特点
+  “目标贴纸中的数字”常常是：形状内部有一个数字。
+  在二值图里，形状是白色，数字是形状内部的“孔洞”（黑色）。
+
+10.2 用 hierarchy 取数字区域
+     hier[i][3] = 父轮廓下标
+     数字判据：parent >= 0 && hier[parent][3] == -1
+     （我有父，且父是顶层 -> 我是形状内部的孔洞）
+  没有子轮廓时，退回用顶层轮廓（纯数字图的情况）。
+
+10.3 裁剪与预处理
+     cv::Rect box = cv::boundingRect(contour);
+     cv::Mat roi = binary(box).clone();     // 黑字白底
+     cv::resize(roi, big, cv::Size(), scale, scale, cv::INTER_LINEAR);
+     cv::copyMakeBorder(big, pad, 20, 20, 20, 20,
+                        cv::BORDER_CONSTANT, cv::Scalar(255));
+  为什么要放大：Tesseract 对字高 30~100 像素最敏感，小字识别率低。
+  为什么要加白边：Tesseract 贴着边缘的文字识别率差。
+
+10.4 Tesseract 调用流程
+     tesseract::TessBaseAPI api;
+     api.Init(NULL, "eng");
+     api.SetPageSegMode(tesseract::PSM_SINGLE_CHAR);
+     api.SetVariable("tessedit_char_whitelist", "0123456789");
+     api.SetImage(pad.data, pad.cols, pad.rows, 1, (int)pad.step);
+     char* txt = api.GetUTF8Text();
+     int conf = api.MeanTextConf();
+     api.Clear();
+     delete[] txt;
+
+10.5 Tesseract 参数说明
+     Init(NULL, "eng")     第一参数是 tessdata 目录，NULL = 系统默认
+                           （Linux 常见 /usr/share/tesseract-ocr/5/tessdata）
+     PSM_SINGLE_CHAR       页面分割模式：单个字符
+                           （PSM_SINGLE_LINE 一行、PSM_SINGLE_WORD 一个词、PSM_AUTO 自动）
+     whitelist             白名单，限定只输出 0-9，避免识别成字母
+     SetImage 五参数        (数据指针, 宽, 高, 通道数, 每行字节数)
+     MeanTextConf()        平均置信度，范围 0~100（不是 0~1）
+     Clear()               每次识别后清状态，否则会累积
+     delete[] txt          返回的 char* 要自己释放
+
+10.6 置信度与失败处理
+  confMin = 50：置信度 < 50 判为识别失败（valid=0）。
+  实测清晰数字为 96~97。
+  没有数字区域 -> valid=0（no target）。
+
+10.7 引擎只初始化一次（视频必须）
+     static tesseract::TessBaseAPI api;
+     static bool inited = false;
+     if (!inited) { api.Init(...); ...; inited = true; }
+  static 局部变量只在第一次进入时初始化，之后一直存在。
+  不加 static，视频每帧都加载模型（~150ms/帧），会极慢。
+
+10.8 模板匹配为什么失败（做过的尝试）
+  用 cv::putText 的 FONT_HERSHEY_SIMPLEX 生成 0-9 模板，
+  再 resize 到统一 40x40、matchTemplate(TM_CCOEFF_NORMED)。
+  结果：三角形/矩形/圆能认，数字 3 被认成 6/8/9。
+  原因：实际贴纸字体是圆润粗笔画，模板是细笔画，形状差异大。
+  结论：模板匹配对字体、尺度、粗细极敏感，不适合字体未知的场景。
+
+10.9 模板匹配仍然有用的地方
+  字体固定、尺度固定、位置可变时它很轻量（无额外依赖）。
+  置信度用 TM_CCOEFF_NORMED 的最高分（约 -1~1）。
+
+10.10 可选依赖的写法
+  CMake 里：
+     find_package(PkgConfig QUIET)
+     if (PkgConfig_FOUND)
+         pkg_check_modules(TESSERACT QUIET tesseract)
+     endif()
+     if (TESSERACT_FOUND)
+         target_link_libraries(task6 ${TESSERACT_LIBRARIES})
+         target_compile_definitions(task6 PRIVATE HAVE_TESSERACT)
+     endif()
+  代码里用 #ifdef HAVE_TESSERACT 包住。
+  效果：别的机器没装 Tesseract 也能编译，只是识别失败返回 valid=0。
+
+
+================================================================================
+11  图像预处理流水线（任务3）
+================================================================================
+
+11.1 五个步骤
+     原图
+      ① BGR / 灰度 / HSV 转换   换“视角”
+      ② 二值化 + 阈值            分离目标
+      ③ 形态学去噪               去小白点、补小洞
+      ④ 轮廓查找                 找边界
+      ⑤ 画中心 / 坐标轴 / 检测框  建立坐标系、标注结果
+
+11.2 每步的产出给谁用
+     mask    -> findContours
+     targets -> 形状识别（顶点数、填充率）
+     center  -> 对准、角度计算
+
+11.3 各任务只换中间一步
+     任务3：mask -> 轮廓 -> 画框
+     任务4：HSV 阈值 -> mask -> 轮廓 -> 重心
+     任务5：mask -> 轮廓 -> 几何特征 -> 形状标签
+     任务6：mask -> 子轮廓（孔洞） -> OCR -> 数字
+
+11.4 边界情况
+     没有轮廓   -> valid=0，不要保留上一帧坐标
+     多个目标   -> 遍历所有轮廓，或按面积取最大
+     参数不合适 -> mask 全黑/全白，轮廓 0 个或 1 个超大轮廓
+
+11.5 为什么“坐标系”重要
+  最终要控制电机让箭头对准靶板（任务11）。
+  视觉要输出目标位置和角度；坐标系方向错了（x 当 y），角度全错，电机转错方向。
+  所以“画中心/坐标轴”是所有定位计算的根基。
+
+
+================================================================================
+12  视频与摄像头
+================================================================================
+
+12.1 VideoCapture 两种打开方式
+     cv::VideoCapture cap(0);            // 整数 = 摄像头索引
+     cv::VideoCapture cap("a.mp4");      // 字符串 = 文件路径
+  字符串 "0" 会被当成文件名，打不开（这是最常见的坑）。
+
+12.2 是否打开成功
+     cap.isOpened()   // bool
+
+12.3 常用属性 get()
+     CAP_PROP_FPS           帧率
+     CAP_PROP_FRAME_COUNT   总帧数（摄像头通常 0 或 -1）
+     CAP_PROP_FRAME_WIDTH   宽
+     CAP_PROP_FRAME_HEIGHT  高
+     CAP_PROP_POS_MSEC      当前帧时间戳（毫秒）
+     CAP_PROP_POS_FRAMES    当前帧号
+
+12.4 设置参数 set()
+     cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
+     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
+  不是所有摄像头都支持，设置后要用 get 确认实际值。
+
+12.5 读帧
+     cap >> frame;          // 等价于 cap.read(frame)
+  读完或断开时 frame 为空，用 frame.empty() 退出循环。
+
+12.6 释放
+     cap.release();
+  不释放可能导致下次打开报 device busy。
+
+12.7 视频循环的标准写法
+     while (1) {
+         cap >> frame;
+         if (frame.empty()) break;
+         // 处理 frame
+         cv::imshow("result", frame);
+         if (cv::waitKey(30) == 27) break;   // 27 = ESC
+     }
+  循环里必须有 waitKey，否则窗口不刷新、看起来像卡死。
+  waitKey 返回按键 ASCII 码，没按键返回 -1。
+
+12.8 摄像头的特殊性
+     fps 常取到 0 -> 建 VideoWriter 时要默认 25
+     没有总帧数  -> FRAME_COUNT 为 0 或 -1
+     可能断开    -> frame.empty() 时退出或尝试重连
+
+12.9 VideoWriter 四参数
+     cv::VideoWriter writer;
+     writer.open("out.avi",
+                 cv::VideoWriter::fourcc('M','J','P','G'),
+                 fps, cv::Size(w, h), isColor);
+
+12.10 fourcc 编码
+     'M','J','P','G'  MJPG，兼容好、体积较大（推荐）
+     'X','V','I','D'  XVID
+     'm','p','4','v'  mp4v（写 .mp4 常用）
+     'H','2','6','4'  H264（部分环境缺编码器会失败）
+  FourCC = Four Character Code，4 个字符代表一种编码。
+  系统缺对应编码器时 open 会失败（isOpened() == false）。
+
+12.11 尺寸与颜色
+     open 的 frameSize 必须等于 write() 喂进去的帧尺寸，否则写入失败/损坏。
+     写灰度帧要传 isColor = false。
+
+12.12 release 很重要
+  VideoWriter 必须 release() 才会把文件索引写完整；
+  不 release，生成的视频可能无法播放。
+
+12.13 常见坑
+     尺寸不匹配         -> 视频损坏或写不进
+     忘记 release       -> 文件末尾损坏
+     编码器缺失         -> 换 MJPG
+     fps 给 0           -> 时长异常，给正数
+     彩色/灰度不一致    -> open(..., isColor=false)
+     扩展名与编码不配   -> .mp4 用 mp4v，.avi 用 MJPG
+
+
+================================================================================
+13  命令行与程序结构（C++）
+================================================================================
+
+13.1 argc / argv
+     argc = 参数个数（含程序名本身）
+     argv[0] = 程序路径；argv[1] 起是用户参数，类型都是 char*
+
+13.2 判断“参数是不是纯数字”
+     if (!path.empty() && path.find_first_not_of("0123456789") == std::string::npos)
+  find_first_not_of("0123456789")：找第一个“不是数字”的字符，返回下标。
+  找不到返回 std::string::npos（表示“没找到”）。
+  所以“找不到非数字字符” = 全是数字 = 纯数字参数。
+  !path.empty() 防止空串（空串也会返回 npos）。
+
+13.3 字符串转数字
+     int    idx     = std::stoi(argv[1]);   // "0"     -> 0
+     double minArea = std::stod(argv[2]);   // "300.0" -> 300.0
+  stoi = string to int；stod = string to double。
+  不是数字会抛异常：std::invalid_argument / std::out_of_range。
+  稳妥写法：
+     try { p.thresh = std::stoi(argv[2]); }
+     catch (...) { std::cerr << "bad number" << std::endl; return 1; }
+
+13.4 auto
+     auto cap = common::openVideo(path);   // 类型自动推断为 cv::VideoCapture
+  长类型名不用手写；必须在定义时有初值。
+
+13.5 引用 & 与指针 *
+     引用：必须绑定已有对象，不能为空，用法像普通变量。
+     指针：可以为空，需要判空再解引用。
+  函数参数优先用引用；需要“可选”时用指针或 std::optional。
+
+13.6 为什么用 cv::VideoCapture& 传参
+     void processStream(cv::VideoCapture& cap, ...)
+  引用传递，函数里操作的就是外面那个对象（不是副本）。
+  VideoCapture 管着底层设备/文件句柄，不能随便复制。
+  不能传临时对象：processStream(common::openVideo(path), ...) 编译错误，
+  因为非 const 引用不能绑定临时值。要分两步：
+     auto cap = common::openVideo(path);
+     processStream(cap, ...);
+
+13.7 static 局部变量
+  函数里的 static 变量只在第一次进入时初始化，之后一直存在到程序结束。
+  用途：Tesseract 引擎只 Init 一次，视频每帧复用。
+
+13.8 取扩展名
+     std::string ext = std::filesystem::path("a/b/video.mp4").extension().string();  // ".mp4"
+  返回带点的扩展名；没有扩展名返回空串。
+
+13.9 输入分流顺序（重要）
+     1) 空串？        -> 报错
+     2) 纯数字？      -> 摄像头（打开后直接 return）
+     3) 文件存在？    -> 不存在就报错
+     4) 视频扩展名？  -> 视频
+     5) 否则          -> 图片
+  顺序错了会出现“把 0 当文件名”的错误。
+
+13.10 参数包 struct
+     struct Params { int thresh = 127; int morphSize = 5; double minArea = 500.0; };
+  作用：把可调旋钮集中一处，函数间只传一个对象。
+  传参用 const Params&（不复制、只读）。
+  为什么不用全局变量：全局变量任何函数都能改，出问题难查。
+
+13.11 struct 与 class 的区别
+  C++ 里几乎一样：struct 默认 public，class 默认 private。
+  只用来“装数据 + 少量逻辑”时，习惯用 struct。
+
+
+================================================================================
+14  工程与构建（CMake / common.hpp）
+================================================================================
+
+14.1 common.hpp 的作用
+  放各任务共用的通用工具：loadImage / openVideo / tick / tickMs / outputPath。
+  头文件里定义的函数必须加 inline，否则被多个 .cpp include 会“重定义”。
+
+14.2 inline 与 #pragma once
+     #pragma once          防止同一个头文件被重复包含
+     inline 函数           允许在多个文件里出现同一份定义
+  C++17 之后 inline 的主要作用是“允许跨文件重复定义”，
+  是否真的内联展开由编译器决定。
+  头文件里只声明不定义也可以，但就得在某个 .cpp 里定义。
+
+14.3 CMakeLists 结构
+     cmake_minimum_required(VERSION 3.16)
+     set(CMAKE_CXX_STANDARD 17)
+     project(demo CXX)
+     find_package(OpenCV REQUIRED)
+
+     add_executable(taskN src/taskN.cpp)
+     target_link_libraries(taskN ${OpenCV_LIBS})
+  配置放在最前面；每个任务一个 target。
+
+14.4 可选依赖（Tesseract）
+     find_package(PkgConfig QUIET)
+     if (PkgConfig_FOUND)
+         pkg_check_modules(TESSERACT QUIET tesseract)
+     endif()
+     if (TESSERACT_FOUND)
+         target_include_directories(task6 PRIVATE ${TESSERACT_INCLUDE_DIRS})
+         target_link_libraries(task6 ${TESSERACT_LIBRARIES})
+         target_compile_definitions(task6 PRIVATE HAVE_TESSERACT)
+         message(STATUS "Tesseract found")
+     else()
+         message(WARNING "Tesseract not found, task6 builds without OCR")
+     endif()
+  没有 Tesseract 也能编译，只是功能退化。
+
+14.5 编译与运行
+     cmake -S . -B build          配置（改了 CMakeLists 后需要）
+     cmake --build build          编译（会自动重新配置）
+     ./build/taskN 参数            运行
+     rm -rf build                清缓存（出现怪问题时）
+
+
+================================================================================
+15  踩坑速查表
+================================================================================
+
+  现象                                 原因 / 对策
+  ----------------------------------------------------------------------------
+  imshow 崩溃 (size.width>0)           图是空的 -> 先判断 empty()
+  颜色阈值全错                         H 写成 0~360 -> OpenCV 是 0~179
+  红色只识别到一半                     红色跨两端 -> 两段 inRange + bitwise_or
+  findContours 找不到轮廓              图不是“黑底白目标” -> 反相
+  轮廓数量一大堆                       没做形态学去噪/面积过滤
+  圆形被认成 unknown                   用圆形度 -> 改用填充率
+  旋转后方块认不出                     boundingRect 会变形 -> 用 minAreaRotated
+  数字 3 被认成 6/8/9                  模板字体不符 -> 用 OCR
+  视频非常卡                           每帧重新 Init OCR -> static 只初始化一次
+  摄像头打开报 busy                    上一进程没 release -> 释放/杀进程
+  传 "0" 打不开摄像头                  字符串被当文件名 -> 用整数索引
+  传 0 报“路径不存在”                  exists 检查在前 -> 摄像头分支提前
+  保存的视频打不开                     忘记 release() -> 循环后 release
+  写视频失败                           尺寸不一致 / 编码器缺失 -> 对齐尺寸、换 MJPG
+  画的东西没显示                       没 waitKey -> 加 waitKey
+  多窗口只刷新一个                     需要多次 waitKey
+  拼接图像报错                         尺寸/通道/类型不一致 -> 灰度转三通道
+  灰度图拼不进彩色图                   1 通道 vs 3 通道 -> cvtColor GRAY2BGR
+  参数改了没效果                       改了硬编码常量 -> 用 Params 传参
+  程序换个目录编译失败                 用了绝对路径 / build 缓存 -> 相对路径、清 build
+
+
+================================================================================
+16  任务与实现对应关系
+================================================================================
+
+  任务2  图像/视频/摄像头输入输出
+     processImage / processStream
+     输出：帧号、时间戳、处理耗时
+     错误处理：路径不存在、图片损坏、摄像头断开
+
+  任务3  图像预处理与坐标系
+     cvting（BGR/灰度/HSV 拼接）
+     makeMask（二值化 + 开运算）
+     findTargets（轮廓 + 面积过滤）
+     drawOverlay（中心点、x/y 轴、检测框）
+
+  任务4  颜色识别
+     getColorRange（颜色名 -> HSV 两段）
+     detectColor（inRange -> 形态学 -> 轮廓 -> moments 重心）
+     输出：valid / center / area
+
+  任务5  形状识别
+     detectShapes（灰度 + Otsu + 极性自适应 + 轮廓）
+     classifyShape（填充率判圆 -> 顶点数判三角/矩形）
+     输出：label / center / area
+
+  任务6  数字识别
+     detectDigits（hierarchy 取形状内部孔洞）
+     放大 + 加白边 -> Tesseract(单字符 + 白名单)
+     输出：label / center / confidence / valid
+
+  共同输入约定
+     纯数字 -> 摄像头；视频扩展名 -> 视频；其它 -> 图片
+     视频与摄像头共用 processStream(VideoCapture&, ...)
+
+
+================================================================================
+附录  颜色识别示例代码
+================================================================================
+作用：演示 HSV 颜色识别绿色物体的完整流程。
+
+#include <opencv2/opencv.hpp>
+#include <vector>
+
+int main() {
+    cv::Mat src = cv::imread("your_image.png");
+
+    cv::Mat hsv;
+    cv::cvtColor(src, hsv, cv::COLOR_BGR2HSV);
+
+    cv::Scalar lower(35, 50, 50);
+    cv::Scalar upper(85, 255, 255);
+
+    cv::Mat mask;
+    cv::inRange(hsv, lower, upper, mask);
+
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+    cv::erode(mask, mask, kernel);
+    cv::dilate(mask, mask, kernel);
+
+    std::vector<std::vector<cv::Point>> contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(mask, contours, hierarchy,
+                     cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    for (size_t i = 0; i < contours.size(); ++i) {
+        double area = cv::contourArea(contours[i]);
+        if (area < 500) continue;
+
+        cv::Rect rect = cv::boundingRect(contours[i]);
+        cv::rectangle(src, rect, cv::Scalar(0, 255, 0), 2);
+        cv::putText(src, "green", cv::Point(rect.x, rect.y - 5),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                    cv::Scalar(0, 255, 0), 2);
+    }
+
+    cv::imshow("result", src);
+    cv::waitKey(0);
+    return 0;
+}
