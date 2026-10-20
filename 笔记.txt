@@ -9,6 +9,38 @@ OpenCV 学习笔记
   waitKey()         0 为一直等待按键，具体数值表示等待的毫秒数
   imwrite("地址", 图) 保存图片
 
+  ---- 补充：函数的参数与返回值细节 ----
+  imread("路径", flags)
+     flags 常用：
+       cv::IMREAD_COLOR      默认，读成 3 通道 BGR（丢掉透明通道）
+       cv::IMREAD_GRAYSCALE  直接读成单通道灰度图
+       cv::IMREAD_UNCHANGED  保留原样（含 alpha，可能是 4 通道）
+     读失败返回空 Mat，必须用 img.empty() 判断。
+  imwrite("路径", img)
+     返回 bool：成功 true，失败 false（不抛异常）。
+     扩展名决定保存格式（.png 无损 / .jpg 有损）。
+  namedWindow("名", flags)
+     WINDOW_AUTOSIZE（默认，窗口随图大小，不能拉伸）
+     WINDOW_NORMAL（可以手动拉伸）
+  destroyWindow("名") 关一个窗口；destroyAllWindows() 关全部。
+  clone() / copyTo()
+     都是深拷贝，得到独立像素的一份图。
+     clone 直接复制；copyTo 可以带掩膜只复制一部分。
+  Mat 常用成员：
+     rows, cols   行数(高)、列数(宽)
+     channels()   通道数（灰度 1，彩色 3）
+     type()       类型编码（如 CV_8UC3）
+     depth()      数据类型（如 CV_8U）
+     empty()      是否为空
+     total()      像素总数 = rows * cols
+  at<T>(y, x)
+     灰度图：img.at<uchar>(y, x)
+     彩色图：img.at<cv::Vec3b>(y, x)   // Vec3b = 3 个 uchar = (B,G,R)
+  Mat 常见类型：
+     CV_8UC1  单通道 8 位（灰度图、掩膜）
+     CV_8UC3  三通道 8 位（BGR 彩色图）
+     CV_32FC1 单通道 32 位浮点（matchTemplate 的相似度结果）
+
 二、OpenCV 中的 HSV 颜色表
   OpenCV 的 H 范围是 0~179，S 和 V 范围都是 0~255。
   识别颜色时通常把 S 和 V 设为 50~255 或 100~255，用来排除白色、黑色和太暗的像素。
@@ -20,6 +52,27 @@ OpenCV 学习笔记
     蓝色：  H 100~124
     紫色：  H 125~155
     粉色：  H 156~169
+
+  ---- 补充：颜色表怎么用、怎么校准 ----
+  1. 表的用途
+     表里只是“大致 H 范围”，实际要配合 S/V 上下界一起用：
+        lower = Scalar(H低, 50, 50);
+        upper = Scalar(H高, 255, 255);
+  2. 要留容差
+     光照、白平衡、摄像头差异会让 H 偏移几点，
+     实际阈值常比表里上下各放宽 3~5（绿色 35~85 可用 32~88）。
+  3. 怎么实测某个像素的 HSV（校准用）
+        cv::Mat hsv;
+        cv::cvtColor(img, hsv, cv::COLOR_BGR2HSV);
+        cv::Vec3b p = hsv.at<cv::Vec3b>(y, x);
+        std::cout << (int)p[0] << "," << (int)p[1] << "," << (int)p[2];
+     把鼠标/笔尖指到目标上，读出的 H/S/V 就是该目标的实际值。
+  4. 红色为什么要两段
+     色相环首尾相接，红跨 0 点，所以要 0~10 和 170~179 两段合并。
+  5. 常见误判与对策
+     白色/灰色被当成彩色 -> S 太低 -> 提高 S 下界
+     阴影被当成目标     -> V 太低 -> 提高 V 下界
+     过曝区域变白       -> S 掉到很低，颜色信息丢失，无法识别（只能控曝光）
 
 三、第一次接触 OpenCV 时容易忽略的地方
   1. 图像变量是 cv::Mat。Mat b = a; 只是浅拷贝，a 和 b 共用同一份像素数据；
@@ -63,11 +116,59 @@ OpenCV 学习笔记
         - 如果只是 imshow 单独显示灰度图，不需要转，单通道可以直接显示；
         - 拼接要求“尺寸相同 + 通道数相同 + 数据类型相同”，否则报错。
 
+  ---- 补充：Mat 内存、ROI、越界、窗口 ----
+  1. Mat 是引用计数（浅拷贝不复制像素）
+        Mat b = a;          // b 与 a 指向同一份像素，计数 +1
+        Mat b = a.clone();  // 真正复制，互不影响
+     所以函数参数常用 const Mat& 来避免复制。
+  2. ROI（感兴趣区域）是“视图”，不是拷贝
+        cv::Mat roi = img(cv::Rect(x, y, w, h));
+        roi.setTo(cv::Scalar(0, 0, 0));   // 原图对应区域也会变黑
+     想要独立就 roi.clone()。
+  3. 坐标对应关系
+     图像坐标 (x, y) 中 x 是列(col)、y 是行(row)；
+     at<Vec3b>(y, x) 先写 y 再写 x，和数学里的 (x,y) 相反，极易写错。
+  4. 越界访问
+     at<> 默认不做边界检查，越界会读到脏数据或崩溃；循环边界用 rows/cols。
+  5. CV_8U 会溢出回绕
+     超出 0~255 的加减会 mod 256；需要安全饱和用 cv::saturate_cast<uchar>()。
+  6. 窗口
+     同名窗口再次 imshow 会复用；有多个窗口时要多次 waitKey 才能都刷新。
+  7. imshow 前必须保证 Mat 非空
+     空图 imshow 会触发断言 size.width>0 && size.height>0 失败并崩溃。
+
 四、视频 / 摄像头速记
   cv::VideoCapture cap(path)：用路径打开视频（或摄像头）。
   cap.isOpened()：返回 bool，是否成功打开。
   cap.get(cv::CAP_PROP_FRAME_WIDTH) / CAP_PROP_FRAME_HEIGHT：取视频的宽、高。
   cap >> frame：从视频里取下一帧（每次调用前进一帧），读完或断开时 frame 为空。
+
+  ---- 补充：VideoCapture 的属性、设置与释放 ----
+  1. 两种打开方式
+        cv::VideoCapture cap(0);          // 整数 = 摄像头索引
+        cv::VideoCapture cap("a.mp4");    // 字符串 = 文件路径
+     字符串 "0" 会被当成文件名，打不开。
+  2. 常用属性 get()
+        CAP_PROP_FPS          帧率
+        CAP_PROP_FRAME_COUNT  总帧数（摄像头通常 0 或 -1）
+        CAP_PROP_FRAME_WIDTH  宽
+        CAP_PROP_FRAME_HEIGHT 高
+        CAP_PROP_POS_MSEC     当前帧时间戳（毫秒）
+        CAP_PROP_POS_FRAMES   当前帧号
+  3. 设置参数 set()
+        cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
+        cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
+     不是所有摄像头都支持，设置后要用 get 确认实际生效值。
+  4. 读帧
+        cap >> frame;   等价于  cap.read(frame);
+     读完或断开时 frame 为空，用 frame.empty() 退出循环。
+  5. 释放
+        cap.release();
+     用完释放，避免设备被占用（否则下次打开报 device busy）。
+  6. 摄像头 fps 常取到 0
+     建 VideoWriter 时要给默认值（如 25），否则 open 失败。
+  7. 循环里必须有 waitKey
+     否则窗口不刷新，看起来像卡死。
 
 五、VideoWriter 与 writer.open 详解（保存视频）
   ---------------------------------------------------------------------------
@@ -126,6 +227,23 @@ OpenCV 学习笔记
      - 彩色/灰度不一致：open 默认写彩色；若喂灰度图，最好用 open(..., isColor=false)。
 
 
+  ---- 补充：VideoWriter 的其它细节 ----
+  1. isColor 参数
+        writer.open(name, fourcc, fps, size, isColor);
+     默认 true（彩色）。要写灰度帧就传 false，否则颜色会错。
+  2. 扩展名决定“容器”，fourcc 决定“编码”
+        .avi / .mp4 / .mkv 只是容器；编码看 fourcc。
+        avi + MJPG 最稳；mp4 可用 fourcc('m','p','4','v')。
+  3. 尺寸必须一致
+     open 时的 frameSize 必须等于 write() 喂进去的帧尺寸，
+     不一致会写入失败或生成损坏视频。
+  4. 输出 fps 只影响播放时长
+     它与实际写入快慢无关。
+  5. open 失败要判断
+        if (!writer.isOpened()) { 报错并跳过写入 }
+  6. 文件大小
+     由 分辨率 x 帧率 x 时长 x 编码压缩率 决定，MJPG 体积偏大。
+
 六、struct Params 详解（把预处理参数集中管理）
   ---------------------------------------------------------------------------
   1. 长什么样（task3）
@@ -170,6 +288,19 @@ OpenCV 学习笔记
      只用来“装数据 + 少量逻辑”时，习惯用 struct。
 
 
+  ---- 补充：参数管理的其它做法 ----
+  1. 为什么不用全局变量
+     全局变量任何函数都能改，出问题难查；Params 作为参数显式传递，
+     谁读谁写一目了然。
+  2. 传值 vs 传引用
+        void f(Params p);          // 复制一份，函数内改了不影响外面
+        void f(const Params& p);   // 不复制、只读（推荐）
+  3. 默认成员初始值的限制
+     带默认初始值的结构体仍可用 {} 聚合初始化；
+     但成员顺序一改，聚合初始化容易错位，建议用对象赋值。
+  4. 可调参数 vs 固定常量
+     要现场调动的放 Params；算法固定的常量（如 0.02 的 epsilon）留在函数里。
+
 七、二值化的作用（threshold）
   ---------------------------------------------------------------------------
   1. 是什么
@@ -197,6 +328,28 @@ OpenCV 学习笔记
      二值化 = 用一条阈值线，把“灰度世界”砍成“黑白世界”，
      让计算机只关心“是不是目标”，方便下一步找轮廓。
 
+
+  ---- 补充：Otsu、自适应阈值、类型对比 ----
+  1. Otsu 自动阈值
+        cv::threshold(grey, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+     thresh 写 0 即可，Otsu 自动找“类间方差最大”的阈值。
+     适合直方图有明显双峰的图（深色目标 + 浅色背景）。
+  2. 自适应阈值 adaptiveThreshold
+        cv::adaptiveThreshold(grey, dst, 255,
+            cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY, 11, 2);
+     每个像素用邻域均值/高斯加权算阈值，适合光照不均匀的图。
+     blockSize 取奇数（邻域大小），C 是从均值里减掉的常数。
+  3. 阈值类型对比
+        THRESH_BINARY     : >thresh -> maxval，否则 0
+        THRESH_BINARY_INV : 反过来（目标是暗色时用）
+        THRESH_TRUNC      : >thresh 的截断为 thresh
+        THRESH_TOZERO     : <=thresh 变 0
+        THRESH_TOZERO_INV : >thresh 变 0
+  4. 什么时候用 INV
+     目标黑、背景白时，BINARY 会得到“背景白”，
+     用 BINARY_INV 让目标变白，findContours 才找得到。
+  5. 二值化前必须先灰度
+     threshold 只接受单通道图。
 
 八、任务3 题意：图像预处理流水线
   ---------------------------------------------------------------------------
@@ -239,6 +392,21 @@ OpenCV 学习笔记
      坐标系方向搞错（比如 x 当 y），算出的角度就全错，电机转错方向。
      所以“画中心/坐标轴”看着简单，其实是后面所有定位计算的根基。
 
+
+  ---- 补充：这条流水线在后续任务里怎么复用 ----
+  1. 每一步产出什么
+     mask    -> 给 findContours
+     targets -> 给形状识别（顶点数/圆形度）
+     center  -> 给对准与角度计算
+  2. 各任务只换中间一步
+     任务3：mask -> 轮廓 -> 画框
+     任务4：HSV 阈值 -> mask -> 轮廓 -> 重心
+     任务5：mask -> 轮廓 -> 几何特征 -> 形状标签
+     任务6：mask -> 子轮廓(孔洞) -> OCR -> 数字
+  3. 边界情况
+     没有轮廓     -> 输出 valid=0，不要保留上一帧坐标
+     多个目标     -> 遍历所有轮廓，或按面积取最大
+     参数不合适   -> mask 全黑/全白，轮廓为 0 个或 1 个超大轮廓
 
 九、makeMask 逐行详解（二值化 + 形态学去噪）
   添加时间：2026-10-16 21:30:59
@@ -314,6 +482,21 @@ OpenCV 学习笔记
      makeMask = 灰度化 -> 阈值二值化 -> 开运算去噪 -> 返回黑白掩膜。
 
 
+  ---- 补充：threshold 与 kernel 的细节 ----
+  1. 为什么先 cvtColor 再 threshold
+     threshold 只接受单通道；直接传三通道会抛异常。
+  2. 固定阈值 vs Otsu
+     固定阈值：光照稳定、对比固定时好用，可手动调。
+     Otsu：自动，适合亮度会变但对比明显的场景。
+  3. kernel 形状
+     MORPH_RECT    矩形（默认，去方形噪声好）
+     MORPH_ELLIPSE 椭圆（边缘更圆滑）
+     MORPH_CROSS   十字（保留细线）
+  4. kernel 大小
+     3x3 轻微，5x5 常用，7x7 以上很猛（小目标会消失），一般取奇数。
+  5. 返回值的开销
+     return binary; 只复制“头”（引用计数），像素不复制，非常轻。
+
 十、findTargets 逐行详解（轮廓查找 + 过滤）
   添加时间：2026-10-16 21:57:39
   ---------------------------------------------------------------------------
@@ -381,6 +564,26 @@ OpenCV 学习笔记
      再用面积过滤掉小噪声，返回真正的目标轮廓。
 
 
+  ---- 补充：轮廓的其它几何量 ----
+  1. contourArea 与 boundingRect 面积不同
+     contourArea   ：轮廓围成的实际面积
+     boundingRect  ：外接矩形面积 = w * h
+     倾斜的目标两者差很多。
+  2. 轮廓点顺序
+     点沿边界按顺序排列，但起点和方向（顺/逆时针）不保证。
+  3. approxPolyDP 多边形逼近
+        cv::approxPolyDP(contour, approx, epsilon, true);
+     epsilon 越大顶点越少；常用 epsilon = 0.02 * arcLength。
+     用来数顶点判断三角形/四边形（任务5）。
+  4. 凸包与凹陷
+        cv::convexHull(contour, hull);
+        cv::convexityDefects(contour, hullIdx, defects);
+     凸包=把轮廓“绷紧”的多边形；凹陷可识别星形、箭头。
+  5. 为什么传 clone()
+     findContours 某些版本会改写输入图，不想破坏原掩膜就传副本。
+  6. 面积过滤经验值
+     <100 多为噪点；占画面 1% 以上通常是真目标。
+
 十一、drawOverlay 逐行详解（画中心/坐标轴/检测框）
   添加时间：2026-10-17 00:09:03
   ---------------------------------------------------------------------------
@@ -443,6 +646,20 @@ OpenCV 学习笔记
      drawOverlay = 在图上画中心点、坐标轴(x右y下)、以及每个目标的检测框，
      直接改图，所以调用前要 clone。
 
+
+  ---- 补充：其它绘图函数与细节 ----
+  1. 线 / 椭圆 / 多边形
+        cv::line(img, p1, p2, color, thickness);
+        cv::ellipse(img, center, axes, angle, startAngle, endAngle, color, thickness);
+        cv::fillPoly(img, pts, color);      // 填充多边形
+  2. lineType 抗锯齿
+        cv::LINE_8（默认，快）、cv::LINE_AA（抗锯齿，慢但平滑）
+  3. 坐标越界
+     绘图函数会自己裁剪，超出图像的部分不画，不会崩。
+  4. putText 的 bottomLeftOrigin
+     第 8 个参数为 true 时 org 表示左上角；默认 false（左下角）。
+  5. 颜色一律 BGR
+     Scalar(0,0,255)=红，Scalar(0,255,0)=绿，Scalar(255,0,0)=蓝。
 
 十二、颜色识别相关函数详解（Point2f/inRange/bitwise_or/moments/putText）
   添加时间：2026-10-17 22:56:22
@@ -530,6 +747,28 @@ OpenCV 学习笔记
      -> putText 标注结果。
 
 
+  ---- 补充：识别里常用的其它函数 ----
+  1. cv::minEnclosingCircle —— 最小外接圆
+        cv::minEnclosingCircle(contour, center, radius);
+     用填充率判圆（任务5）：
+        fill = contourArea / (PI * radius * radius)
+     圆≈1，正方形≈0.64，三角形≈0.4。
+  2. cv::arcLength —— 轮廓周长
+        double peri = cv::arcLength(contour, true);   // true = 闭合
+  3. cv::approxPolyDP —— 多边形逼近
+     见第十节补充，用来数顶点。
+  4. cv::matchTemplate —— 模板匹配
+        cv::matchTemplate(img, tmpl, res, cv::TM_CCOEFF_NORMED);
+     在每个位置算相似度，res 的最大值就是最佳匹配，值域约 -1~1。
+     注意：对尺度、旋转、字体非常敏感（任务6 模板匹配失败的原因）。
+  5. cv::findNonZero —— 找出所有非零像素坐标
+        std::vector<cv::Point> pts;
+        cv::findNonZero(binary, pts);
+     常用来求二值图内容的紧致外接框。
+  6. Vec3b 与 Scalar
+     Vec3b 是“像素容器”（3 个 uchar），配 at<Vec3b> 读写像素；
+     Scalar 是“参数容器”（最多 4 个 double），用于传颜色/阈值。
+
 十三、HSV 颜色空间详解（概念：为什么用 HSV）
   添加时间：2026-10-17 23:08:32
   （第二节只有颜色表，这里补概念）
@@ -594,6 +833,17 @@ OpenCV 学习笔记
      OpenCV 里 H 是 0~179（不是 0~360），红色要两段合并。
 
 
+  ---- 补充：其它颜色空间与光照极限 ----
+  1. HLS
+     H 色相、L 亮度、S 饱和度；和 HSV 类似，只是“亮度”的定义不同。
+  2. Lab
+     L 亮度、a 绿-红、b 蓝-黄；更接近人眼感知，常用于色差比较。
+  3. 为什么颜色识别首选 HSV
+     H 独立于亮度，阈值直观，OpenCV 支持完善。
+  4. 光照的极限
+     过曝（全白）和欠曝（全黑）时 S/V 已无信息，H 也不可靠，
+     任何颜色识别都会失败，只能靠控制曝光。
+
 十四、为什么先开运算再闭运算
   添加时间：2026-10-17 23:46:28
   （第九节只讲了开/闭定义，这里讲顺序原因）
@@ -640,6 +890,22 @@ OpenCV 学习笔记
      cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
      核越大(7x7、9x9)，去噪/补洞越猛，但目标也会被削得更多。5x5 是常用起点。
 
+
+  ---- 补充：形态学的进阶参数 ----
+  1. iterations 迭代次数
+        cv::morphologyEx(src, dst, op, kernel, cv::Point(-1,-1), 2);
+     迭代 2 次 = 做两遍，效果更强（相当于核变大）。
+  2. anchor 锚点
+     默认 (-1,-1) 表示核的中心。
+  3. borderType 边界处理
+     默认 BORDER_CONSTANT；边缘处理时可用 BORDER_REPLICATE 复制边缘像素。
+  4. 与 erode/dilate 的关系
+     erode、dilate 是单步操作；morphologyEx 是组合操作。
+        erode + dilate  == MORPH_OPEN
+        dilate + erode  == MORPH_CLOSE
+  5. 形态学梯度
+     MORPH_GRADIENT = 膨胀 - 腐蚀 -> 得到目标边缘，
+     可当作粗边缘检测（比 Canny 简单，但更粗）。
 
 十五、数字识别新增内容（hierarchy / 缩放 / Tesseract）
   添加时间：2026-10-18 11:15:24
@@ -716,6 +982,125 @@ OpenCV 学习笔记
   8. 一句话
      数字识别链路：Otsu 二值化 -> 用 hierarchy 取“形状内部的孔洞”当数字区域
      -> 放大 + 加白边 -> Tesseract(单字符+白名单) -> 输出 label/center/confidence。
+
+
+  ---- 补充：数字识别的其它细节 ----
+  1. findNonZero + boundingRect 求紧致框
+        std::vector<cv::Point> pts;
+        cv::findNonZero(bin, pts);
+        cv::Rect box = cv::boundingRect(pts);
+     得到“内容的最小外接矩形”，用来裁出数字。
+  2. 归一化为什么重要
+     不同位置/大小的数字直接比对必然失败；
+     先裁到内容、再等比缩放到固定画布、居中，才能比较。
+  3. 模板匹配为什么失败
+     模板用 FONT_HERSHEY_SIMPLEX 生成，而实际贴纸是圆润字体，
+     笔画粗细与形状差异大，3 被认成 6/8/9。
+     模板匹配对字体、尺度、粗细极敏感。
+  4. Tesseract 为什么更好
+     内部是训练好的模型，对字体差异和轻微变形更鲁棒，还能给置信度。
+  5. PSM 页面分割模式
+     PSM_SINGLE_CHAR  单个字符
+     PSM_SINGLE_LINE  一行
+     PSM_SINGLE_WORD  一个词
+     PSM_AUTO         自动（默认）
+  6. tessdata 路径
+     Init 第一个参数为 NULL 时用系统默认
+     （Linux 常见 /usr/share/tesseract-ocr/5/tessdata）。
+     换机器或换语言包时可显式传路径。
+  7. 多个数字
+     一次 SetImage 只识别一个区域；多个目标要循环，每个 ROI 各识别一次。
+  8. 灰度 vs 二值送 OCR
+     二值图（黑字白底）通常比灰度更稳；但噪声多时灰度反而更好，
+     可以两种都试。
+
+十六、统一输入结构涉及的知识点（新）
+  添加时间：2026-10-21 01:50:04
+  ---------------------------------------------------------------------------
+  1. 判断“参数是不是纯数字”
+     if (!path.empty() && path.find_first_not_of("0123456789") == std::string::npos)
+       - find_first_not_of("0123456789")：从左往右找第一个“不是数字”的字符，返回下标。
+       - 找不到 -> 返回 std::string::npos（特殊常量，表示“没找到”）。
+       - 所以“找不到非数字字符” = 全是数字 = 纯数字参数。
+       - !path.empty() 防止空字符串（空串也会返回 npos）。
+
+  2. std::stoi / std::stod —— 字符串转数字
+     int    idx     = std::stoi(argv[1]);   // "0"     -> 0
+     double minArea = std::stod(argv[2]);   // "300.0" -> 300.0
+       - stoi = string to int；stod = string to double。
+       - argv 里永远是字符串，要当数字用必须先转换。
+       - 注意：字符串不是数字（如 "abc"）会抛异常，程序崩溃。
+
+  3. cv::VideoCapture 的两种打开方式（关键）
+     cv::VideoCapture cap(0);              // 整数 0 -> 摄像头（设备索引）
+     cv::VideoCapture cap("video.mp4");    // 字符串 -> 文件路径
+       - 参数是整数：摄像头索引（0 = 默认摄像头）。
+       - 参数是字符串：文件路径。
+       - 所以 cap("0")（字符串）会去找名叫 0 的文件，打不开。
+
+  4. auto —— 让编译器推断类型
+     auto cap = common::openVideo(path);   // cap 的类型是 cv::VideoCapture
+       - 长类型名不用手写。
+       - 必须在定义时就有初值。
+
+  5. 为什么用 cv::VideoCapture& 传参
+     void processStream(cv::VideoCapture& cap, ...)
+       - & = 引用传递，函数里操作的就是外面那个对象（不是副本）。
+       - VideoCapture 管着底层设备/文件句柄，不能随便复制。
+       - 不能传临时对象：processStream(common::openVideo(path), ...) 编译错误，
+         因为非 const 引用不能绑定临时值。
+       - 所以要分两步：
+           auto cap = common::openVideo(path);
+           processStream(cap, ...);
+
+  6. static 局部变量 —— 只初始化一次
+     static tesseract::TessBaseAPI api;
+     static bool inited = false;
+     if (!inited) { api.Init(NULL, "eng"); ...; inited = true; }
+       - 函数里的 static 变量只在第一次进入时初始化，之后一直存在（生命周期到程序结束）。
+       - 用途：Tesseract 加载模型很慢，只 Init 一次，视频每帧复用。
+       - 不加 static 就每帧新建/初始化，视频会极慢。
+
+  7. std::filesystem::path::extension() —— 取扩展名
+     std::string ext = std::filesystem::path("a/b/video.mp4").extension().string();  // ".mp4"
+       - 返回带点的扩展名；没有扩展名返回空串。
+       - 用来判断输入是图片还是视频。
+
+  8. waitKey 返回值和 ESC
+     if (cv::waitKey(30) == 27) break;
+       - waitKey(30) 返回按键的 ASCII 码，没按键返回 -1。
+       - 27 是 ESC 键的 ASCII 码。
+
+  9. 为什么摄像头分支要放在 exists 检查前面
+     if (纯数字) { 打开摄像头; return; }      // 先判断
+     if (!std::filesystem::exists(path)) { ... }
+       - "0" 不是文件，exists("0") 返回 false，会直接报“路径不存在”。
+       - 所以必须先判断“是不是摄像头索引”，处理完直接 return。
+
+  10. 一句话
+     输入分流顺序：纯数字 -> 摄像头；视频扩展名 -> 视频；否则 -> 图片。
+     视频和摄像头共用 processStream(cv::VideoCapture&, ...)，因为都是逐帧读。
+
+
+  ---- 补充：命令行参数与异常处理 ----
+  1. argc / argv
+     argc = 参数个数（含程序名本身）
+     argv[0] = 程序路径；argv[1] 起是用户参数，类型都是 char*
+  2. std::stoi 的异常
+     参数不是数字会抛 std::invalid_argument，超出范围抛 std::out_of_range。
+     稳妥写法：
+         try { p.thresh = std::stoi(argv[2]); }
+         catch (...) { std::cerr << "bad number" << std::endl; return 1; }
+  3. 引用与指针
+     引用 &：必须绑定已有对象、不能为空，用法像普通变量。
+     指针 *：可以为空，需要判空再解引用。
+     函数参数优先用引用；需要“可选”时用指针或 std::optional。
+  4. 为什么 processStream 不返回值
+     它直接写视频/显示，结果通过文件输出；
+     若需要返回统计信息，可改成返回结构体或加引用参数。
+  5. 分流顺序的健壮性
+     先判空串 -> 再判纯数字 -> 再判文件存在 -> 最后看扩展名。
+     顺序错了就会出现“把 0 当文件名”的错误。
 
 
 =============================================================================
