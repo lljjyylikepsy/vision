@@ -33,15 +33,14 @@ void processImage(const std::string& path, const std::string& color) {
     return;
 }
 
-void processVideo(const std::string& path, const std::string& color) {
-    auto cap = common::openVideo(path);
+void processStream(cv::VideoCapture& cap, const std::string& outName, const std::string& color) {
     if (!cap.isOpened()) return;
     double fps = cap.get(cv::CAP_PROP_FPS);
     if (fps <= 0) fps = 25.0;
     cv::Size sz(static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH)), static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT)));
     cv::VideoWriter writer;
     if (sz.width > 0 && sz.height > 0) {
-        writer.open(common::outputPath("task4_video.avi").string(), cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), fps, sz);
+        writer.open(common::outputPath(outName).string(), cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), fps, sz);
     }
     cv::Mat frame;
     int frameID = 0;
@@ -73,13 +72,23 @@ int main(int argc, char** argv){
     }
     std::string path = argv[1];
     std::string color = argv[2];
+    if (!path.empty() && path.find_first_not_of("0123456789") == std::string::npos) {
+        cv::VideoCapture cap(std::stoi(path));
+        if (!cap.isOpened()) {
+            std::cerr << "[error] cannot open camera " << path << std::endl;
+            return 1;
+        }
+        processStream(cap, "task4_camera.avi", color);
+        return 0;
+    }
     if (!std::filesystem::exists(path)) {
         std::cerr << "[error] path not exist: " << path << std::endl;
         return 1;
     }
     std::string ext = std::filesystem::path(path).extension().string();
     if (ext == ".mp4" || ext == ".avi" || ext == ".mov" || ext == ".mkv") {
-        processVideo(path, color);
+        auto cap = common::openVideo(path);
+        processStream(cap, "task4_video.avi", color);
     } else {
         processImage(path, color);
     }
