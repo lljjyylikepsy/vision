@@ -42,20 +42,66 @@ void processImage(const std::string& path, const Params& p) {
     return;
 }
 
+void processStream(cv::VideoCapture& cap, const std::string& outName, const Params& p) {
+    if (!cap.isOpened()) return;
+    double fps = cap.get(cv::CAP_PROP_FPS);
+    if (fps <= 0) fps = 25.0;
+    cv::Size sz(static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH)), static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT)));
+    cv::VideoWriter writer;
+    if (sz.width > 0 && sz.height > 0) {
+        writer.open(common::outputPath(outName).string(), cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), fps, sz);
+    }
+    cv::Mat frame;
+    int frameID = 0;
+    while (1) {
+        cap >> frame;
+        if (frame.empty()) break;
+        double t0 = common::tick();
+        cv::Mat mask = makeMask(frame, p);
+        auto targets = findTargets(mask, p);
+        cv::Mat copy = frame.clone();
+        drawOverlay(copy, targets);
+        double costMs = common::tickMs(t0);
+        std::cout << "FrameID: " << frameID << "; ts = " << cap.get(cv::CAP_PROP_POS_MSEC) << "ms; cost = " << costMs << "ms; targets = " << targets.size() << std::endl;
+        frameID++;
+        if (writer.isOpened()) writer.write(copy);
+        cv::imshow("overlayResult", copy);
+        if (cv::waitKey(30) == 27) break;
+    }
+    writer.release();
+    cap.release();
+    cv::destroyAllWindows();
+    return;
+}
+
 int main (int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "usage: " << argv[0] << " <image or video path>" << std::endl;
         return 1;
     }
     std::string path = argv[1];
+    Params p;
+    if (argc >= 3) p.thresh = std::stoi(argv[2]);
+    if (!path.empty() && path.find_first_not_of("0123456789") == std::string::npos) {
+        cv::VideoCapture cap(std::stoi(path));
+        if (!cap.isOpened()) {
+            std::cerr << "[error] cannot open camera " << path << std::endl;
+            return 1;
+        }
+        processStream(cap, "task3_camera.avi", p);
+        return 0;
+    }
     if (!std::filesystem::exists(path)) {
         std::cerr << "[error] path not exist: " << path << std::endl;
         return 1;
     }
-    Params p;
-    if (argc >= 3) p.thresh = std::stoi(argv[2]);
     std::string ext = std::filesystem::path(path).extension().string();
-    processImage(path, p);
+    if (ext == ".mp4" || ext == ".avi" || ext == ".mov" || ext == ".mkv") {
+        auto cap = common::openVideo(path);
+        processStream(cap, "task3_video.avi", p);
+    } else {
+        processImage(path, p);
+    }
     return 0;
 }
 
