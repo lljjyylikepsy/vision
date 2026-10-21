@@ -35,3 +35,6 @@ if (TESSERACT_FOUND)
 else()
     message(WARNING "Tesseract not found, task6 will build without OCR")
 endif()
+
+add_executable(task7 src/task7.cpp)
+target_link_libraries(task7 ${OpenCV_LIBS})
