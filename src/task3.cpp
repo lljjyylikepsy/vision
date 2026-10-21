@@ -82,21 +82,14 @@ int main (int argc, char** argv) {
     std::string path = argv[1];
     Params p;
     if (argc >= 3) p.thresh = std::stoi(argv[2]);
-    if (!path.empty() && path.find_first_not_of("0123456789") == std::string::npos) {
-        cv::VideoCapture cap(std::stoi(path));
-        if (!cap.isOpened()) {
-            std::cerr << "[error] cannot open camera " << path << std::endl;
-            return 1;
-        }
+    if (common::isCameraIndex(path)) {
+        auto cap = common::openCamera(path);
+        if (!cap.isOpened()) return 1;
         processStream(cap, "task3_camera.avi", p);
         return 0;
     }
-    if (!std::filesystem::exists(path)) {
-        std::cerr << "[error] path not exist: " << path << std::endl;
-        return 1;
-    }
-    std::string ext = std::filesystem::path(path).extension().string();
-    if (ext == ".mp4" || ext == ".avi" || ext == ".mov" || ext == ".mkv") {
+    if (!common::ensurePathExists(path)) return 1;
+    if (common::isVideoFile(path)) {
         auto cap = common::openVideo(path);
         processStream(cap, "task3_video.avi", p);
     } else {
