@@ -30,16 +30,20 @@ void processDirectory(const std::string& dir, const CalibParams& p);
 void processImage(const std::string& path, const CalibParams& p) {
     cv::Mat img;
     if (!common::loadImage(path, img)) return;
+    double t0 = common::tick();
+    //
     std::vector<cv::Point2f> corners;
     if (!detectCorners(img, p.board, corners)) {
         std::cerr << "[error] chessboard not found: " << path << std::endl;
         return;
     }
+    //
+    double costMs = common::tickMs(t0);
     cv::Mat copy = img.clone();
     cv::drawChessboardCorners(copy, p.board, corners, true);
     auto out = common::outputPath("task7_result.png");
     cv::imwrite(out.string(), copy);
-    std::cout << "corners = " << corners.size() << std::endl;
+    std::cout << "corners = " << corners.size() << "; cost = " << costMs << "ms" << std::endl;
     std::cout << "saving to: " << out.string() << std::endl;
     cv::imshow("result", copy);
     cv::waitKey(0);
@@ -62,9 +66,11 @@ void processStream(cv::VideoCapture& cap, const CalibParams& p) {
         cap >> frame;
         if (frame.empty()) break;
         if (imageSize.empty()) imageSize = frame.size();
+        double t0 = common::tick();
         if (frameID % p.frequency == 0 && static_cast<int>(objectPoints.size()) < maxViews) {
             std::vector<cv::Point2f> corners;
-            if (detectCorners(frame, p.board, corners)) {
+            bool found = detectCorners(frame, p.board, corners);
+            if (found) {
                 double move = 0.0;
                 if (lastCorners.size() == corners.size()) {
                     for (size_t i = 0; i < corners.size(); ++i) move += cv::norm(corners[i] - lastCorners[i]);
@@ -81,6 +87,8 @@ void processStream(cv::VideoCapture& cap, const CalibParams& p) {
                 cv::drawChessboardCorners(frame, p.board, corners, true);
             }
         }
+        double costMs = common::tickMs(t0);
+        std::cout << "FrameID: " << frameID << "; ts = " << cap.get(cv::CAP_PROP_POS_MSEC) << "ms; cost = " << costMs << "ms" << std::endl;
         frameID++;
         cv::imshow("result", frame);
         if (cv::waitKey(30) == 27) break;
@@ -219,14 +227,17 @@ void processDirectory(const std::string& dir, const CalibParams& p) {
             std::cerr << "[warn] size mismatch, skip: " << f << std::endl;
             continue;
         }
+        double t0 = common::tick();
         std::vector<cv::Point2f> corners;
-        if (!detectCorners(img, p.board, corners)) {
+        bool found = detectCorners(img, p.board, corners);
+        double costMs = common::tickMs(t0);
+        if (!found) {
             std::cerr << "[warn] chessboard not found: " << f << std::endl;
             continue;
         }
         objectPoints.push_back(objectTemplate);
         imagePoints.push_back(corners);
-        std::cout << "captured view " << objectPoints.size() << ": " << f << std::endl;
+        std::cout << "captured view " << objectPoints.size() << ": " << f << "; cost = " << costMs << "ms" << std::endl;
     }
     if (imagePoints.size() < 3) {
         std::cerr << "[error] valid views < 3" << std::endl;
