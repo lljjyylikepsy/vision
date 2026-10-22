@@ -38,3 +38,6 @@ endif()
 
 add_executable(task7 src/task7.cpp)
 target_link_libraries(task7 ${OpenCV_LIBS})
+
+add_executable(task8 src/task8.cpp)
+target_link_libraries(task8 ${OpenCV_LIBS})
