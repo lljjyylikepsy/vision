@@ -7,3 +7,5 @@ data/*.PNG
 data/*.png
 
 笔记*.txt
+
+motor/
