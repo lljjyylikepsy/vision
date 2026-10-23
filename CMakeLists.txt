@@ -44,3 +44,13 @@ target_link_libraries(task8 ${OpenCV_LIBS})
 
 add_executable(task9 src/task9.cpp)
 target_link_libraries(task9 ${OpenCV_LIBS})
+
+add_executable(task10 src/task10.cpp)
+target_link_libraries(task10 ${OpenCV_LIBS})
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/motor/control.cpp")
+    enable_language(C)
+    target_sources(task10 PRIVATE motor/control.cpp motor/angle_uart.c)
+    target_include_directories(task10 PRIVATE motor)
+    target_compile_definitions(task10 PRIVATE HAVE_MOTOR)
+endif()

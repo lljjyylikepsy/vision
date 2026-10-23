@@ -1,0 +1,9 @@
+%YAML:1.0
+---
+device: "/dev/ttyUSB0"
+baud: 115200
+period_ms: 30
+protocol: "text"
+text_format: "%.0f"
+stop_value: 999.0
+justfloat_fields: "angle"
