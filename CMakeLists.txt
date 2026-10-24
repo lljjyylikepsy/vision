@@ -54,3 +54,34 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/motor/control.cpp")
     target_include_directories(task10 PRIVATE motor)
     target_compile_definitions(task10 PRIVATE HAVE_MOTOR)
 endif()
+
+add_library(vision_core STATIC
+    src/color.cpp
+    src/shape.cpp
+    src/digit.cpp
+    src/arrow.cpp
+    src/board.cpp
+    src/calib.cpp
+    src/target.cpp
+    src/uart_sender.cpp
+)
+target_include_directories(vision_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(vision_core PUBLIC ${OpenCV_LIBS})
+
+if(TESSERACT_FOUND)
+    target_include_directories(vision_core PRIVATE ${TESSERACT_INCLUDE_DIRS})
+    target_link_libraries(vision_core PRIVATE ${TESSERACT_LIBRARIES})
+    target_compile_definitions(vision_core PRIVATE HAVE_TESSERACT)
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/motor/control.cpp")
+    if(NOT CMAKE_C_COMPILER_LOADED)
+        enable_language(C)
+    endif()
+    target_sources(vision_core PRIVATE motor/control.cpp motor/angle_uart.c)
+    target_include_directories(vision_core PRIVATE motor)
+    target_compile_definitions(vision_core PRIVATE HAVE_MOTOR)
+endif()
+
+add_executable(task11 src/task11.cpp)
+target_link_libraries(task11 PRIVATE vision_core)
