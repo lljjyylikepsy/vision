@@ -130,7 +130,7 @@ ArrowResult detectArrow(const cv::Mat& img) {
     if (r.length < 10.0) return r;
     double dx = r.tip.x - r.center.x;
     double dy = r.tip.y - r.center.y;
-    r.angleDeg = std::atan2(dx, -dy) * 180.0 / CV_PI;
+    r.angleDeg = std::atan2(-dx, -dy) * 180.0 / CV_PI;
     r.valid = true;
     return r;
 }

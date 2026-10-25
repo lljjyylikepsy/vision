@@ -218,7 +218,7 @@ ArrowResult detectArrow(const cv::Mat& img) {
     if (r.length < 10.0) return r;
     double dx = r.tip.x - r.center.x;
     double dy = r.tip.y - r.center.y;
-    r.angleDeg = std::atan2(dx, -dy) * 180.0 / CV_PI;
+    r.angleDeg = std::atan2(-dx, -dy) * 180.0 / CV_PI;
     r.valid = true;
     return r;
 }
@@ -232,7 +232,7 @@ void drawResult(cv::Mat& img, const ArrowResult& r) {
     cv::circle(img, r.tip, 8, cv::Scalar(0, 0, 255), 2);
     cv::arrowedLine(img, r.center, r.tip, cv::Scalar(0, 255, 0), 3);
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "angle %.2f deg (up=0, CW positive)  length %.1f px", r.angleDeg, r.length);
+    std::snprintf(buf, sizeof(buf), "angle %.2f deg (up=0, CCW positive)  length %.1f px", r.angleDeg, r.length);
     cv::putText(img, buf, cv::Point(20, 40), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
     std::snprintf(buf, sizeof(buf), "center (%.1f, %.1f)  tip (%.1f, %.1f)", r.center.x, r.center.y, r.tip.x, r.tip.y);
     cv::putText(img, buf, cv::Point(20, 75), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
@@ -244,6 +244,6 @@ void printResult(const ArrowResult& r, double costMs) {
         std::cout << "valid = 0; cost = " << costMs << "ms" << std::endl;
         return;
     }
-    std::cout << "valid = 1; center = (" << r.center.x << ", " << r.center.y << "); tip = (" << r.tip.x << ", " << r.tip.y << "); angle = " << r.angleDeg << "deg (up=0, CW positive); length = " << r.length << "px; redArea = " << r.redArea << "; blueArea = " << r.blueArea << "; cost = " << costMs << "ms" << std::endl;
+    std::cout << "valid = 1; center = (" << r.center.x << ", " << r.center.y << "); tip = (" << r.tip.x << ", " << r.tip.y << "); angle = " << r.angleDeg << "deg (up=0, CCW positive); length = " << r.length << "px; redArea = " << r.redArea << "; blueArea = " << r.blueArea << "; cost = " << costMs << "ms" << std::endl;
     return;
 }

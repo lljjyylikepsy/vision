@@ -122,6 +122,7 @@ int main(int argc, char** argv) {
     auto logPath = common::outputPath("task11_status.csv");
     state.statusLog.open(logPath.string(), std::ios::app);
     if (state.statusLog.is_open()) {
+        state.statusLog << "# angle convention: up=0, CCW positive\n";
         state.statusLog << "# time_ms,frame_id,board_complete,target_label,target_conf,target_x,target_y,arrow_cx,arrow_cy,arrow_angle,target_angle,error,motor_cmd,valid,online\n";
         state.statusLog.flush();
     }
@@ -170,7 +171,7 @@ double normalizeAngle(double deg) {
 }
 
 double targetAngleDeg(const cv::Point2f& center, const cv::Point2f& target) {
-    return std::atan2(target.x - center.x, -(target.y - center.y)) * 180.0 / CV_PI;
+    return std::atan2(-(target.x - center.x), -(target.y - center.y)) * 180.0 / CV_PI;
 }
 
 Task11FrameResult processFrame(const cv::Mat& frame, Task11State& state) {
@@ -184,7 +185,7 @@ Task11FrameResult processFrame(const cv::Mat& frame, Task11State& state) {
     if (r.arrow.valid && r.target.valid) {
         r.targetAngle = targetAngleDeg(r.arrow.center, r.target.center);
         r.error = normalizeAngle(r.targetAngle - r.arrow.angleDeg);
-        r.motorCmd = -r.error;
+        r.motorCmd = r.error;
         if (std::fabs(r.error) < state.cfg.deadbandDeg) r.motorCmd = 0.0;
         r.valid = true;
     }
@@ -209,7 +210,7 @@ void drawResult(cv::Mat& img, const Task11FrameResult& r) {
     }
     if (r.valid) cv::line(img, r.arrow.center, r.target.center, cv::Scalar(255, 0, 0), 2);
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "valid %d  board %d  arrow %.1f  target %.1f  error %.1f  cmd %.1f", r.valid, r.board.complete, r.arrow.angleDeg, r.targetAngle, r.error, r.motorCmd);
+    std::snprintf(buf, sizeof(buf), "valid %d  board %d  arrow %.1f  target %.1f  error %.1f  cmd %.1f (CCW+)", r.valid, r.board.complete, r.arrow.angleDeg, r.targetAngle, r.error, r.motorCmd);
     cv::putText(img, buf, cv::Point(20, 40), cv::FONT_HERSHEY_SIMPLEX, 0.7, r.valid ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255), 2);
     return;
 }
