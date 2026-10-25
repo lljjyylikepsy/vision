@@ -9,4 +9,4 @@ struct DigitResult {
     double confidence = 0.0;
 };
 
-std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin);
+std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin01);

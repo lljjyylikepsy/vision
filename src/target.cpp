@@ -68,7 +68,7 @@ TargetResult detectTarget(const cv::Mat& img, const TargetSpec& spec) {
     }
     if (!spec.digit.empty()) {
         labels.push_back(spec.digit);
-        std::vector<DigitResult> digits = detectDigits(img, 50.0);
+        std::vector<DigitResult> digits = detectDigits(img, 0.5);
         int want = -1;
         try {
             want = std::stoi(spec.digit);
@@ -90,12 +90,14 @@ TargetResult detectTarget(const cv::Mat& img, const TargetSpec& spec) {
             r.center = digits[best].center;
             ref = r.center;
             hasRef = true;
-            conf = std::min(conf, digits[best].confidence / 100.0);
+            conf = std::min(conf, digits[best].confidence);
         } else {
             requiredOk = false;
         }
     }
     if (labels.empty() || !requiredOk || !hasRef) return r;
+    if (conf < 0.0) conf = 0.0;
+    if (conf > 1.0) conf = 1.0;
     r.valid = true;
     r.confidence = conf;
     for (size_t i = 0; i < labels.size(); ++i) {

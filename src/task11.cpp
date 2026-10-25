@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
     auto logPath = common::outputPath("task11_status.csv");
     state.statusLog.open(logPath.string(), std::ios::app);
     if (state.statusLog.is_open()) {
-        state.statusLog << "# time_ms,frame_id,board_complete,target_label,target_x,target_y,arrow_cx,arrow_cy,arrow_angle,target_angle,error,motor_cmd,valid,online\n";
+        state.statusLog << "# time_ms,frame_id,board_complete,target_label,target_conf,target_x,target_y,arrow_cx,arrow_cy,arrow_angle,target_angle,error,motor_cmd,valid,online\n";
         state.statusLog.flush();
     }
     std::string path = argv[1];
@@ -217,6 +217,6 @@ void drawResult(cv::Mat& img, const Task11FrameResult& r) {
 void logStatus(Task11State& state, const Task11FrameResult& r) {
     if (!state.statusLog.is_open()) return;
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    state.statusLog << ms << ',' << state.frameID << ',' << (r.board.complete ? 1 : 0) << ',' << r.target.label << ',' << r.target.center.x << ',' << r.target.center.y << ',' << r.arrow.center.x << ',' << r.arrow.center.y << ',' << r.arrow.angleDeg << ',' << r.targetAngle << ',' << r.error << ',' << r.motorCmd << ',' << (r.valid ? 1 : 0) << ',' << (state.sender.online() ? 1 : 0) << '\n';
+    state.statusLog << ms << ',' << state.frameID << ',' << (r.board.complete ? 1 : 0) << ',' << r.target.label << ',' << r.target.confidence << ',' << r.target.center.x << ',' << r.target.center.y << ',' << r.arrow.center.x << ',' << r.arrow.center.y << ',' << r.arrow.angleDeg << ',' << r.targetAngle << ',' << r.error << ',' << r.motorCmd << ',' << (r.valid ? 1 : 0) << ',' << (state.sender.online() ? 1 : 0) << '\n';
     state.statusLog.flush();
 }

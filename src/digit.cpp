@@ -4,7 +4,7 @@
 #include <tesseract/baseapi.h>
 #endif
 
-std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin) {
+std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin01) {
     std::vector<DigitResult> results;
     cv::Mat grey;
     cv::cvtColor(img, grey, cv::COLOR_BGR2GRAY);
@@ -60,8 +60,8 @@ std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin) {
         while (!s.empty() && (s.back() == '\n' || s.back() == ' ')) s.pop_back();
         if (!s.empty() && s[0] >= '0' && s[0] <= '9') {
             r.label = s[0] - '0';
-            r.confidence = conf < 0 ? 0 : conf;
-            r.valid = r.confidence >= confMin ? 1 : 0;
+            r.confidence = conf < 0 ? 0.0 : (conf > 100 ? 1.0 : conf / 100.0);
+            r.valid = r.confidence >= confMin01 ? 1 : 0;
         }
 #endif
         results.push_back(r);

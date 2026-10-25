@@ -13,7 +13,7 @@ struct DigitResult {
     double confidence = 0.0;
 };
 
-std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin);
+std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin01);
 void drawResults(cv::Mat& img, const std::vector<DigitResult>& results);
 
 void processImage(const std::string& path) {
@@ -21,7 +21,7 @@ void processImage(const std::string& path) {
     if (!common::loadImage(path, img)) return;
     double t0 = common::tick();
     //
-    std::vector<DigitResult> results = detectDigits(img, 50.0);
+    std::vector<DigitResult> results = detectDigits(img, 0.5);
     //
     double costMs = common::tickMs(t0);
     std::cout << "digits = " << results.size() << "; cost = " << costMs << "ms" << std::endl;
@@ -51,7 +51,7 @@ void processStream(cv::VideoCapture& cap, const std::string& outName) {
     while (1) {
         cap >> frame;
         if (frame.empty()) break;
-        std::vector<DigitResult> results = detectDigits(frame, 50.0);
+        std::vector<DigitResult> results = detectDigits(frame, 0.5);
         std::cout << "FrameID: " << frameID << "; ts = " << cap.get(cv::CAP_PROP_POS_MSEC) << "ms; digits = " << results.size() << std::endl;
         frameID++;
         drawResults(frame, results);
@@ -87,7 +87,7 @@ int main(int argc, char** argv){
     return 0;
 }
 
-std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin) {
+std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin01) {
     std::vector<DigitResult> results;
     cv::Mat grey;
     cv::cvtColor(img, grey, cv::COLOR_BGR2GRAY);
@@ -143,8 +143,8 @@ std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin) {
         while (!s.empty() && (s.back() == '\n' || s.back() == ' ')) s.pop_back();
         if (!s.empty() && s[0] >= '0' && s[0] <= '9') {
             r.label = s[0] - '0';
-            r.confidence = conf < 0 ? 0 : conf;
-            r.valid = r.confidence >= confMin ? 1 : 0;
+            r.confidence = conf < 0 ? 0.0 : (conf > 100 ? 1.0 : conf / 100.0);
+            r.valid = r.confidence >= confMin01 ? 1 : 0;
         }
 #endif
         results.push_back(r);
@@ -155,7 +155,7 @@ std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin) {
 void drawResults(cv::Mat& img, const std::vector<DigitResult>& results) {
     for (size_t i = 0; i < results.size(); ++i) {
         cv::circle(img, cv::Point(static_cast<int>(results[i].center.x), static_cast<int>(results[i].center.y)), 5, cv::Scalar(0, 0, 255), -1);
-        std::string text = cv::format("%d (%.0f)", results[i].label, results[i].confidence);
+        std::string text = cv::format("%d (%.2f)", results[i].label, results[i].confidence);
         cv::putText(img, text, cv::Point(static_cast<int>(results[i].center.x) + 8, static_cast<int>(results[i].center.y) - 8), cv::FONT_HERSHEY_SIMPLEX, 0.5, results[i].valid ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255), 2);
     }
 }
