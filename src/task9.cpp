@@ -116,10 +116,10 @@ ArrowResult detectArrow(const cv::Mat& img) {
     cv::Mat red;
     cv::Mat blue;
     cv::cvtColor(img, hsv, cv::COLOR_BGR2HSV);
-    cv::inRange(hsv, cv::Scalar(0, 120, 100), cv::Scalar(25, 255, 255), red1);
-    cv::inRange(hsv, cv::Scalar(170, 120, 100), cv::Scalar(180, 255, 255), red2);
+    cv::inRange(hsv, cv::Scalar(148, 55, 170), cv::Scalar(172, 140, 255), red1);
+    cv::inRange(hsv, cv::Scalar(148, 55, 170), cv::Scalar(172, 140, 255), red2);
     cv::bitwise_or(red1, red2, red);
-    cv::inRange(hsv, cv::Scalar(90, 100, 80), cv::Scalar(140, 255, 255), blue);
+    cv::inRange(hsv, cv::Scalar(108, 85, 170), cv::Scalar(140, 255, 255), blue);
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(9, 9));
     cv::morphologyEx(red, red, cv::MORPH_CLOSE, kernel);
     cv::morphologyEx(blue, blue, cv::MORPH_CLOSE, kernel);
@@ -144,30 +144,23 @@ ArrowResult detectArrow(const cv::Mat& img) {
     double dirLen = cv::norm(dir);
     if (dirLen < 1.0) return r;
     dir /= static_cast<float>(dirLen);
-    double minProj = 1e18;
-    double maxProj = -1e18;
-    for (const auto& p : blueContours[bi]) {
-        double d = (cv::Point2f(p) - blueC).dot(dir);
-        minProj = std::min(minProj, d);
-        maxProj = std::max(maxProj, d);
+    cv::Mat coreRoi = cv::Mat::zeros(img.size(), CV_8U);
+    cv::rectangle(coreRoi, cv::boundingRect(blueContours[bi]), 255, cv::FILLED);
+    cv::Mat core;
+    cv::inRange(hsv, cv::Scalar(0, 0, 235), cv::Scalar(180, 60, 255), core);
+    core &= coreRoi;
+    std::vector<cv::Point> corePoints;
+    cv::findNonZero(core, corePoints);
+    r.center = blueC;
+    if (!corePoints.empty()) {
+        cv::Rect coreBox = cv::boundingRect(corePoints);
+        r.center = cv::Point2f(coreBox.x + coreBox.width / 2.0f, coreBox.y + coreBox.height / 2.0f);
     }
-    double baseCut = minProj + 0.05 * (maxProj - minProj);
-    cv::Point2f sum(0, 0);
-    int count = 0;
-    for (const auto& p : blueContours[bi]) {
-        double d = (cv::Point2f(p) - blueC).dot(dir);
-        if (d <= baseCut) {
-            sum += cv::Point2f(p);
-            ++count;
-        }
-    }
-    if (count == 0) return r;
-    r.center = sum / static_cast<float>(count);
     cv::Mat tip1;
     cv::Mat tip2;
     cv::Mat tipMask;
-    cv::inRange(hsv, cv::Scalar(0, 140, 200), cv::Scalar(25, 255, 255), tip1);
-    cv::inRange(hsv, cv::Scalar(170, 140, 200), cv::Scalar(180, 255, 255), tip2);
+    cv::inRange(hsv, cv::Scalar(150, 65, 190), cv::Scalar(170, 140, 255), tip1);
+    cv::inRange(hsv, cv::Scalar(150, 65, 190), cv::Scalar(170, 140, 255), tip2);
     cv::bitwise_or(tip1, tip2, tipMask);
     tipMask &= red;
     std::vector<cv::Point> tipPoints;
