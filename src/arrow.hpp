@@ -7,7 +7,7 @@ struct ArrowResult {
     cv::Point2f tip;
     double angleDeg = 0.0;
     double length = 0.0;
-    double redArea = 0.0;
+    double pinkArea = 0.0;
     double blueArea = 0.0;
 };
 
