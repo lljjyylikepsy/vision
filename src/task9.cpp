@@ -10,8 +10,9 @@ struct ArrowResult {
     cv::Point2f tip;
     double angleDeg = 0.0;
     double length = 0.0;
-    double redArea = 0.0;
+    double pinkArea = 0.0;
     double blueArea = 0.0;
+    cv::Mat region;
 };
 
 int largestContourIndex(const std::vector<std::vector<cv::Point>>& contours);
@@ -33,6 +34,12 @@ void processImage(const std::string& path) {
     auto out = common::outputPath("task9_result.png");
     cv::imwrite(out.string(), copy);
     std::cout << "saving to: " << out.string() << std::endl;
+    if (!r.region.empty()) {
+        auto regionOut = common::outputPath("task9_arrow_region.png");
+        cv::imwrite(regionOut.string(), r.region);
+        std::cout << "saving to: " << regionOut.string() << std::endl;
+        cv::imshow("arrow region", r.region);
+    }
     cv::imshow("result", copy);
     cv::waitKey(0);
     cv::destroyAllWindows();
@@ -65,6 +72,7 @@ void processStream(cv::VideoCapture& cap, const std::string& outName) {
         frameID++;
         if (writer.isOpened()) writer.write(frame);
         cv::imshow("result", frame);
+        if (!r.region.empty()) cv::imshow("arrow region", r.region);
         if (cv::waitKey(30) == 27) break;
     }
     writer.release();
@@ -111,104 +119,66 @@ int largestContourIndex(const std::vector<std::vector<cv::Point>>& contours) {
 ArrowResult detectArrow(const cv::Mat& img) {
     ArrowResult r;
     cv::Mat hsv;
-    cv::Mat red1;
-    cv::Mat red2;
-    cv::Mat red;
-    cv::Mat blue;
     cv::cvtColor(img, hsv, cv::COLOR_BGR2HSV);
-    cv::inRange(hsv, cv::Scalar(148, 55, 170), cv::Scalar(172, 140, 255), red1);
-    cv::inRange(hsv, cv::Scalar(148, 55, 170), cv::Scalar(172, 140, 255), red2);
-    cv::bitwise_or(red1, red2, red);
-    cv::inRange(hsv, cv::Scalar(108, 85, 170), cv::Scalar(140, 255, 255), blue);
-    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(9, 9));
-    cv::morphologyEx(red, red, cv::MORPH_CLOSE, kernel);
-    cv::morphologyEx(blue, blue, cv::MORPH_CLOSE, kernel);
-    std::vector<std::vector<cv::Point>> redContours;
+    cv::Mat pink;
+    cv::Mat blue;
+    cv::Mat white;
+    cv::Mat lowS;
+    std::vector<cv::Mat> channels;
+    cv::split(hsv, channels);
+    cv::inRange(hsv, cv::Scalar(148, 60, 180), cv::Scalar(175, 255, 255), pink);
+    cv::inRange(hsv, cv::Scalar(100, 60, 150), cv::Scalar(145, 255, 255), blue);
+    cv::threshold(channels[2], white, 245, 255, cv::THRESH_BINARY);
+    cv::threshold(channels[1], lowS, 60, 255, cv::THRESH_BINARY);
+    cv::bitwise_not(lowS, lowS);
+    cv::bitwise_and(white, lowS, white);
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
+    cv::morphologyEx(pink, pink, cv::MORPH_OPEN, kernel);
+    cv::morphologyEx(blue, blue, cv::MORPH_OPEN, kernel);
+    cv::morphologyEx(white, white, cv::MORPH_OPEN, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(9, 9)));
+    cv::Mat gate;
+    cv::dilate(white, gate, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(15, 15)));
+    cv::bitwise_and(blue, gate, blue);
+    std::vector<std::vector<cv::Point>> pinkContours;
     std::vector<std::vector<cv::Point>> blueContours;
-    cv::findContours(red, redContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-    cv::findContours(blue, blueContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-    int ri = largestContourIndex(redContours);
+    cv::findContours(pink.clone(), pinkContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    cv::findContours(blue.clone(), blueContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    int pi = largestContourIndex(pinkContours);
     int bi = largestContourIndex(blueContours);
-    if (ri < 0 || bi < 0) return r;
-    r.redArea = cv::contourArea(redContours[ri]);
+    if (pi < 0 || bi < 0) return r;
+    r.pinkArea = cv::contourArea(pinkContours[pi]);
     r.blueArea = cv::contourArea(blueContours[bi]);
-    double minRed = std::max(50.0, img.total() * 1e-5);
-    double minBlue = std::max(100.0, img.total() * 2e-5);
-    if (r.redArea < minRed || r.blueArea < minBlue) return r;
-    cv::Moments mr = cv::moments(redContours[ri]);
+    double minPink = std::max(200.0, img.total() * 2e-5);
+    double minBlue = std::max(300.0, img.total() * 1e-4);
+    if (r.pinkArea < minPink || r.blueArea < minBlue) return r;
+    cv::Moments mp = cv::moments(pinkContours[pi]);
     cv::Moments mb = cv::moments(blueContours[bi]);
-    if (mr.m00 <= 0 || mb.m00 <= 0) return r;
-    cv::Point2f redC(static_cast<float>(mr.m10 / mr.m00), static_cast<float>(mr.m01 / mr.m00));
+    if (mp.m00 <= 0 || mb.m00 <= 0) return r;
+    cv::Point2f pinkC(static_cast<float>(mp.m10 / mp.m00), static_cast<float>(mp.m01 / mp.m00));
     cv::Point2f blueC(static_cast<float>(mb.m10 / mb.m00), static_cast<float>(mb.m01 / mb.m00));
-    cv::Point2f dir = redC - blueC;
-    double dirLen = cv::norm(dir);
-    if (dirLen < 1.0) return r;
-    dir /= static_cast<float>(dirLen);
-    cv::Mat coreRoi = cv::Mat::zeros(img.size(), CV_8U);
-    cv::rectangle(coreRoi, cv::boundingRect(blueContours[bi]), 255, cv::FILLED);
-    cv::Mat core;
-    cv::inRange(hsv, cv::Scalar(0, 0, 235), cv::Scalar(180, 60, 255), core);
-    core &= coreRoi;
-    std::vector<cv::Point> corePoints;
-    cv::findNonZero(core, corePoints);
+    double dist = cv::norm(pinkC - blueC);
+    double diag = std::sqrt(static_cast<double>(img.cols) * img.cols + static_cast<double>(img.rows) * img.rows);
+    if (dist < 20.0 || dist > 0.8 * diag) return r;
+    cv::Rect overlap = cv::boundingRect(pinkContours[pi]) & cv::boundingRect(blueContours[bi]);
+    if (overlap.area() <= 0 && dist > 0.15 * diag) return r;
+    cv::Mat labels;
+    cv::Mat stats;
+    cv::Mat centroids;
+    int componentCount = cv::connectedComponentsWithStats(white, labels, stats, centroids, 8, CV_32S);
+    int bestLabel = 0;
+    int bestArea = 0;
+    for (int i = 1; i < componentCount; ++i) {
+        int area = stats.at<int>(i, cv::CC_STAT_AREA);
+        if (area > bestArea) {
+            bestArea = area;
+            bestLabel = i;
+        }
+    }
+    r.region = cv::Mat::zeros(img.size(), CV_8U);
+    if (bestLabel > 0) r.region = (labels == bestLabel);
     r.center = blueC;
-    if (!corePoints.empty()) {
-        cv::Rect coreBox = cv::boundingRect(corePoints);
-        r.center = cv::Point2f(coreBox.x + coreBox.width / 2.0f, coreBox.y + coreBox.height / 2.0f);
-    }
-    cv::Mat tip1;
-    cv::Mat tip2;
-    cv::Mat tipMask;
-    cv::inRange(hsv, cv::Scalar(150, 65, 190), cv::Scalar(170, 140, 255), tip1);
-    cv::inRange(hsv, cv::Scalar(150, 65, 190), cv::Scalar(170, 140, 255), tip2);
-    cv::bitwise_or(tip1, tip2, tipMask);
-    tipMask &= red;
-    std::vector<cv::Point> tipPoints;
-    cv::findNonZero(tipMask, tipPoints);
-    cv::Point2f perp(-dir.y, dir.x);
-    std::vector<cv::Point2f> leftPts;
-    std::vector<cv::Point2f> rightPts;
-    for (const auto& p : tipPoints) {
-        cv::Point2f q(p);
-        if ((q - redC).dot(perp) < 0.0f) leftPts.push_back(q);
-        else rightPts.push_back(q);
-    }
-    bool tipOk = false;
-    if (leftPts.size() >= 10 && rightPts.size() >= 10) {
-        cv::Vec4f l1;
-        cv::Vec4f l2;
-        cv::fitLine(leftPts, l1, cv::DIST_L2, 0, 0.01, 0.01);
-        cv::fitLine(rightPts, l2, cv::DIST_L2, 0, 0.01, 0.01);
-        cv::Point2f p1(l1[2], l1[3]);
-        cv::Point2f d1(l1[0], l1[1]);
-        cv::Point2f p2(l2[2], l2[3]);
-        cv::Point2f d2(l2[0], l2[1]);
-        double den = d1.x * d2.y - d1.y * d2.x;
-        if (std::fabs(den) > 1e-6) {
-            double t = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / den;
-            cv::Point2f tip = p1 + t * d1;
-            cv::Rect rb = cv::boundingRect(redContours[ri]);
-            double margin = 0.2 * std::max(rb.width, rb.height);
-            if (tip.x >= rb.x - margin && tip.x <= rb.x + rb.width + margin && tip.y >= rb.y - margin && tip.y <= rb.y + rb.height + margin) {
-                r.tip = tip;
-                tipOk = true;
-            }
-        }
-    }
-    if (!tipOk) {
-        double bestProj = -1e18;
-        for (const auto& p : tipPoints) {
-            cv::Point2f q(p);
-            double proj = (q - r.center).dot(dir);
-            if (proj > bestProj) {
-                bestProj = proj;
-                r.tip = q;
-            }
-        }
-        if (bestProj < -1e17) return r;
-    }
-    r.length = cv::norm(r.tip - r.center);
-    if (r.length < 10.0) return r;
+    r.tip = pinkC;
+    r.length = dist;
     double dx = r.tip.x - r.center.x;
     double dy = r.tip.y - r.center.y;
     r.angleDeg = std::atan2(-dx, -dy) * 180.0 / CV_PI;
@@ -237,6 +207,6 @@ void printResult(const ArrowResult& r, double costMs) {
         std::cout << "valid = 0; cost = " << costMs << "ms" << std::endl;
         return;
     }
-    std::cout << "valid = 1; center = (" << r.center.x << ", " << r.center.y << "); tip = (" << r.tip.x << ", " << r.tip.y << "); angle = " << r.angleDeg << "deg (up=0, CCW positive); length = " << r.length << "px; redArea = " << r.redArea << "; blueArea = " << r.blueArea << "; cost = " << costMs << "ms" << std::endl;
+    std::cout << "valid = 1; center = (" << r.center.x << ", " << r.center.y << "); tip = (" << r.tip.x << ", " << r.tip.y << "); angle = " << r.angleDeg << "deg (up=0, CCW positive); length = " << r.length << "px; pinkArea = " << r.pinkArea << "; blueArea = " << r.blueArea << "; cost = " << costMs << "ms" << std::endl;
     return;
 }
