@@ -85,3 +85,6 @@ endif()
 
 add_executable(task11 src/task11.cpp)
 target_link_libraries(task11 PRIVATE vision_core)
+
+add_executable(task9rebuild src/task9rebuild.cpp)
+target_link_libraries(task9rebuild ${OpenCV_LIBS})
