@@ -5,6 +5,7 @@ data/*.txt
 data/*.pdf
 data/*.PNG
 data/*.png
+data/*.jpg
 
 笔记*.txt
 
