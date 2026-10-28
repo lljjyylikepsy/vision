@@ -26,6 +26,25 @@ bool loadTargetSpec(const std::string& path, TargetSpec& spec) {
     return true;
 }
 
+std::vector<std::string> parseColors(const std::string& text) {
+    std::vector<std::string> colors;
+    if (text == "all") return allColors();
+    std::string cur;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char ch = text[i];
+        if (ch == ',' || ch == ' ' || ch == ';') {
+            if (!cur.empty()) {
+                colors.push_back(cur);
+                cur.clear();
+            }
+        } else {
+            cur += ch;
+        }
+    }
+    if (!cur.empty()) colors.push_back(cur);
+    return colors;
+}
+
 TargetResult detectTarget(const cv::Mat& img, const TargetSpec& spec) {
     TargetResult r;
     bool requiredOk = true;
@@ -34,11 +53,20 @@ TargetResult detectTarget(const cv::Mat& img, const TargetSpec& spec) {
     double conf = 1.0;
     std::vector<std::string> labels;
     if (!spec.color.empty()) {
-        labels.push_back(spec.color);
-        ColorResult c = detectColor(img, spec.color);
-        if (c.valid) {
-            r.center = c.center;
-            ref = c.center;
+        std::vector<std::string> colors = parseColors(spec.color);
+        std::vector<ColorResult> cands = detectColors(img, colors, 300.0);
+        int best = -1;
+        double bestArea = 0.0;
+        for (size_t i = 0; i < cands.size(); ++i) {
+            if (cands[i].area > bestArea) {
+                bestArea = cands[i].area;
+                best = static_cast<int>(i);
+            }
+        }
+        if (best >= 0) {
+            labels.push_back(cands[best].color);
+            r.center = cands[best].center;
+            ref = r.center;
             hasRef = true;
         } else {
             requiredOk = false;

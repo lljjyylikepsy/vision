@@ -21,49 +21,67 @@ bool getColorRange(const std::string& name, cv::Scalar& lo1, cv::Scalar& hi1, cv
         lo1 = cv::Scalar(125, 50, 50); hi1 = cv::Scalar(155, 255, 255);
     } else if (name == "pink") {
         lo1 = cv::Scalar(156, 50, 50); hi1 = cv::Scalar(169, 255, 255);
+    } else if (name == "black") {
+        lo1 = cv::Scalar(0, 0, 0); hi1 = cv::Scalar(180, 255, 110);
     } else {
         return false;
     }
     return true;
 }
 
-ColorResult detectColor(const cv::Mat& bgr, const std::string& color) {
-    ColorResult r;
-    cv::Scalar lo1, hi1, lo2, hi2;
-    bool hasSecond = false;
-    if (!getColorRange(color, lo1, hi1, lo2, hi2, hasSecond)) {
-        std::cerr << "[error] unknown color: " << color << std::endl;
-        return r;
-    }
+std::vector<std::string> allColors() {
+    return {"red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "black"};
+}
+
+std::vector<ColorResult> detectColors(const cv::Mat& bgr, const std::vector<std::string>& colors, double minArea) {
+    std::vector<ColorResult> results;
     cv::Mat hsv;
     cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
-    cv::Mat mask;
-    cv::inRange(hsv, lo1, hi1, mask);
-    if (hasSecond) {
-        cv::Mat mask2;
-        cv::inRange(hsv, lo2, hi2, mask2);
-        cv::bitwise_or(mask, mask2, mask);
-    }
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
-    cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
-    cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
-    std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-    double maxArea = 0.0;
-    int best = -1;
-    for (size_t i = 0; i < contours.size(); ++i) {
-        double a = cv::contourArea(contours[i]);
-        if (a >= 300.0 && a > maxArea) {
-            maxArea = a;
-            best = static_cast<int>(i);
+    for (const auto& color : colors) {
+        cv::Scalar lo1, hi1, lo2, hi2;
+        bool hasSecond = false;
+        if (!getColorRange(color, lo1, hi1, lo2, hi2, hasSecond)) {
+            std::cerr << "[error] unknown color: " << color << std::endl;
+            continue;
+        }
+        cv::Mat mask;
+        cv::inRange(hsv, lo1, hi1, mask);
+        if (hasSecond) {
+            cv::Mat mask2;
+            cv::inRange(hsv, lo2, hi2, mask2);
+            cv::bitwise_or(mask, mask2, mask);
+        }
+        cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
+        cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
+        std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        for (size_t i = 0; i < contours.size(); ++i) {
+            double a = cv::contourArea(contours[i]);
+            if (a < minArea) continue;
+            ColorResult r;
+            r.color = color;
+            cv::Moments m = cv::moments(contours[i]);
+            if (m.m00 != 0) {
+                r.center = cv::Point2f(static_cast<float>(m.m10 / m.m00), static_cast<float>(m.m01 / m.m00));
+            }
+            r.valid = true;
+            r.area = a;
+            results.push_back(r);
         }
     }
-    if (best < 0) return r;
-    cv::Moments m = cv::moments(contours[best]);
-    if (m.m00 != 0) {
-        r.center = cv::Point2f(static_cast<float>(m.m10 / m.m00), static_cast<float>(m.m01 / m.m00));
+    return results;
+}
+
+ColorResult detectColor(const cv::Mat& bgr, const std::string& color) {
+    std::vector<ColorResult> all = detectColors(bgr, std::vector<std::string>{color}, 300.0);
+    ColorResult r;
+    double best = 0.0;
+    for (size_t i = 0; i < all.size(); ++i) {
+        if (all[i].area > best) {
+            best = all[i].area;
+            r = all[i];
+        }
     }
-    r.valid = true;
-    r.area = maxArea;
     return r;
 }
