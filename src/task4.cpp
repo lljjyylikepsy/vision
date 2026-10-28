@@ -2,30 +2,31 @@
 #include <vector>
 
 struct DetectResult {
-    bool valid  = 0;
+    bool valid = 0;
+    std::string color;
     cv::Point2f center = {0, 0};
-    double area   = 0.0;
+    double area = 0.0;
 };
 
 bool getColorRange(const std::string& name, cv::Scalar& lo1, cv::Scalar& hi1, cv::Scalar& lo2, cv::Scalar& hi2, bool& hasSecond);
-DetectResult detectColor(const cv::Mat& bgr, const std::string& color);
-void drawResult(cv::Mat& img, const DetectResult& r);
+std::vector<std::string> allColors();
+std::vector<DetectResult> detectColors(const cv::Mat& bgr, const std::vector<std::string>& colors, double minArea);
+void drawResults(cv::Mat& img, const std::vector<DetectResult>& results);
 
-void processImage(const std::string& path, const std::string& color) {
+void processImage(const std::string& path, const std::vector<std::string>& colors) {
     cv::Mat img;
     if (!common::loadImage(path, img)) return;
     double t0 = common::tick();
     //
-    DetectResult r = detectColor(img, color);
+    std::vector<DetectResult> results = detectColors(img, colors, 300.0);
+    //
     double costMs = common::tickMs(t0);
-    if (r.valid) {
-        std::cout << "valid=1; center=(" << r.center.x << "," << r.center.y << "); area=" << r.area << "; cost=" << costMs << "ms" << std::endl;
-    } else {
-        std::cout << "valid=0; cost=" << costMs << "ms" << std::endl;
+    std::cout << "count = " << results.size() << "; cost = " << costMs << "ms" << std::endl;
+    for (size_t i = 0; i < results.size(); ++i) {
+        std::cout << "[" << i << "] color=" << results[i].color << "; center=(" << results[i].center.x << "," << results[i].center.y << "); area=" << results[i].area << std::endl;
     }
     cv::Mat copy = img.clone();
-    drawResult(copy, r);
-    //
+    drawResults(copy, results);
     cv::imwrite(common::outputPath("task4_result.png").string(), copy);
     cv::imshow("result", copy);
     cv::waitKey(0);
@@ -33,7 +34,7 @@ void processImage(const std::string& path, const std::string& color) {
     return;
 }
 
-void processStream(cv::VideoCapture& cap, const std::string& outName, const std::string& color) {
+void processStream(cv::VideoCapture& cap, const std::string& outName, const std::vector<std::string>& colors) {
     if (!cap.isOpened()) return;
     double fps = cap.get(cv::CAP_PROP_FPS);
     if (fps <= 0) fps = 25.0;
@@ -47,14 +48,14 @@ void processStream(cv::VideoCapture& cap, const std::string& outName, const std:
     while (1) {
         cap >> frame;
         if (frame.empty()) break;
-        DetectResult r = detectColor(frame, color);
-        if (r.valid) {
-            std::cout << "FrameID: " << frameID << "; valid=1; center=(" << r.center.x << "," << r.center.y << ")" << std::endl;
-        } else {
-            std::cout << "FrameID: " << frameID << "; valid=0" << std::endl;
+        std::vector<DetectResult> results = detectColors(frame, colors, 300.0);
+        std::cout << "FrameID: " << frameID << "; ts = " << cap.get(cv::CAP_PROP_POS_MSEC) << "ms; count = " << results.size();
+        for (size_t i = 0; i < results.size(); ++i) {
+            std::cout << "; " << results[i].color << "(" << results[i].center.x << "," << results[i].center.y << ")";
         }
+        std::cout << std::endl;
         frameID++;
-        drawResult(frame, r);
+        drawResults(frame, results);
         if (writer.isOpened()) writer.write(frame);
         cv::imshow("result", frame);
         if (cv::waitKey(30) == 27) break;
@@ -66,24 +67,29 @@ void processStream(cv::VideoCapture& cap, const std::string& outName, const std:
 }
 
 int main(int argc, char** argv){
-    if (argc < 3) {
-        std::cerr << "usage: " << argv[0] << " <image or video path>" << std::endl;
+    if (argc < 2) {
+        std::cerr << "usage: " << argv[0] << " <image or video path> [color ... | all]" << std::endl;
         return 1;
     }
     std::string path = argv[1];
-    std::string color = argv[2];
+    std::vector<std::string> colors;
+    if (argc < 3 || std::string(argv[2]) == "all") {
+        colors = allColors();
+    } else {
+        for (int i = 2; i < argc; ++i) colors.push_back(argv[i]);
+    }
     if (common::isCameraIndex(path)) {
         auto cap = common::openCamera(path);
         if (!cap.isOpened()) return 1;
-        processStream(cap, "task4_camera.avi", color);
+        processStream(cap, "task4_camera.avi", colors);
         return 0;
     }
     if (!common::ensurePathExists(path)) return 1;
     if (common::isVideoFile(path)) {
         auto cap = common::openVideo(path);
-        processStream(cap, "task4_video.avi", color);
+        processStream(cap, "task4_video.avi", colors);
     } else {
-        processImage(path, color);
+        processImage(path, colors);
     }
     return 0;
 }
@@ -108,58 +114,66 @@ bool getColorRange(const std::string& name, cv::Scalar& lo1, cv::Scalar& hi1, cv
         lo1 = cv::Scalar(125, 50, 50); hi1 = cv::Scalar(155, 255, 255);
     } else if (name == "pink") {
         lo1 = cv::Scalar(156, 50, 50); hi1 = cv::Scalar(169, 255, 255);
+    } else if (name == "black") {
+        lo1 = cv::Scalar(0, 0, 0); hi1 = cv::Scalar(180, 255, 110);
     } else {
         return false;
     }
     return true;
 }
 
-DetectResult detectColor(const cv::Mat& bgr, const std::string& color) {
-    DetectResult r;
-    cv::Scalar lo1, hi1, lo2, hi2;
-    bool hasSecond = false;
-    if (!getColorRange(color, lo1, hi1, lo2, hi2, hasSecond)) {
-        std::cerr << "[error] unknown color: " << color << std::endl;
-        return r;
-    }
-    cv::Mat hsv;
-    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
-    cv::Mat mask;
-    cv::inRange(hsv, lo1, hi1, mask);
-    if (hasSecond) {
-        cv::Mat mask2;
-        cv::inRange(hsv, lo2, hi2, mask2);
-        cv::bitwise_or(mask, mask2, mask);
-    }
-    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
-    cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
-    cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
-    std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-    double maxArea = 0.0;
-    int best = -1;
-    for (size_t i = 0; i < contours.size(); ++i) {
-        double a = cv::contourArea(contours[i]);
-        if (a >= 300.0 && a > maxArea) {
-            maxArea = a;
-            best = static_cast<int>(i);
-        }
-    }
-    if (best < 0) return r;
-    cv::Moments m = cv::moments(contours[best]);
-    if (m.m00 != 0) {
-        r.center = cv::Point2f(static_cast<float>(m.m10 / m.m00), static_cast<float>(m.m01 / m.m00));
-    }
-    r.valid = 1;
-    r.area = maxArea;
-    return r;
+std::vector<std::string> allColors() {
+    return {"red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "black"};
 }
 
-void drawResult(cv::Mat& img, const DetectResult& r) {
-    if (r.valid) {
-        cv::circle(img, cv::Point(static_cast<int>(r.center.x), static_cast<int>(r.center.y)), 6, cv::Scalar(0, 0, 255), -1);
-        cv::putText(img, "valid=1", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
-    } else {
-        cv::putText(img, "valid=0", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 0, 255), 2);
+std::vector<DetectResult> detectColors(const cv::Mat& bgr, const std::vector<std::string>& colors, double minArea) {
+    std::vector<DetectResult> results;
+    cv::Mat hsv;
+    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+    for (const auto& color : colors) {
+        cv::Scalar lo1, hi1, lo2, hi2;
+        bool hasSecond = false;
+        if (!getColorRange(color, lo1, hi1, lo2, hi2, hasSecond)) {
+            std::cerr << "[error] unknown color: " << color << std::endl;
+            continue;
+        }
+        cv::Mat mask;
+        cv::inRange(hsv, lo1, hi1, mask);
+        if (hasSecond) {
+            cv::Mat mask2;
+            cv::inRange(hsv, lo2, hi2, mask2);
+            cv::bitwise_or(mask, mask2, mask);
+        }
+        cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
+        cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
+        std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        for (size_t i = 0; i < contours.size(); ++i) {
+            double a = cv::contourArea(contours[i]);
+            if (a < minArea) continue;
+            DetectResult r;
+            r.color = color;
+            cv::Moments m = cv::moments(contours[i]);
+            if (m.m00 != 0) {
+                r.center = cv::Point2f(static_cast<float>(m.m10 / m.m00), static_cast<float>(m.m01 / m.m00));
+            }
+            r.valid = 1;
+            r.area = a;
+            results.push_back(r);
+        }
     }
+    return results;
+}
+
+void drawResults(cv::Mat& img, const std::vector<DetectResult>& results) {
+    for (size_t i = 0; i < results.size(); ++i) {
+        cv::Point p(static_cast<int>(results[i].center.x), static_cast<int>(results[i].center.y));
+        cv::circle(img, p, 6, cv::Scalar(0, 255, 255), 2);
+        cv::putText(img, results[i].color, p + cv::Point(8, -8), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 0), 4);
+        cv::putText(img, results[i].color, p + cv::Point(8, -8), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1);
+    }
+    std::string text = "count = " + std::to_string(results.size());
+    cv::putText(img, text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 0, 0), 4);
+    cv::putText(img, text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 255, 255), 1);
 }
