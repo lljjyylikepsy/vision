@@ -10,6 +10,7 @@
 #include <fstream>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 struct Task11Config {
     BoardConfig board;
@@ -207,6 +208,11 @@ void drawResult(cv::Mat& img, const Task11FrameResult& r) {
     if (r.arrow.valid) {
         cv::circle(img, r.arrow.center, 8, cv::Scalar(0, 255, 255), 2);
         cv::arrowedLine(img, r.arrow.center, r.arrow.tip, cv::Scalar(0, 0, 255), 3);
+    }
+    if (!r.arrow.region.empty()) {
+        std::vector<std::vector<cv::Point>> regionContours;
+        cv::findContours(r.arrow.region.clone(), regionContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        cv::drawContours(img, regionContours, -1, cv::Scalar(255, 0, 255), 2);
     }
     if (r.valid) cv::line(img, r.arrow.center, r.target.center, cv::Scalar(255, 0, 0), 2);
     char buf[256];
