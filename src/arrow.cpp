@@ -65,6 +65,21 @@ ArrowResult detectArrow(const cv::Mat& img) {
     if (dist < 20.0 || dist > 0.8 * diag) return r;
     cv::Rect overlap = cv::boundingRect(pinkContours[pi]) & cv::boundingRect(blueContours[bi]);
     if (overlap.area() <= 0 && dist > 0.15 * diag) return r;
+    cv::Mat labels;
+    cv::Mat stats;
+    cv::Mat centroids;
+    int componentCount = cv::connectedComponentsWithStats(white, labels, stats, centroids, 8, CV_32S);
+    int bestLabel = 0;
+    int bestArea = 0;
+    for (int i = 1; i < componentCount; ++i) {
+        int area = stats.at<int>(i, cv::CC_STAT_AREA);
+        if (area > bestArea) {
+            bestArea = area;
+            bestLabel = i;
+        }
+    }
+    r.region = cv::Mat::zeros(img.size(), CV_8U);
+    if (bestLabel > 0) r.region = (labels == bestLabel);
     r.center = blueC;
     r.tip = pinkC;
     r.length = dist;
