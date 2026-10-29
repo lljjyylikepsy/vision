@@ -154,6 +154,7 @@ std::vector<DigitResult> detectDigits(const cv::Mat& img, double confMin01) {
 
 void drawResults(cv::Mat& img, const std::vector<DigitResult>& results) {
     for (size_t i = 0; i < results.size(); ++i) {
+        if (results[i].confidence < 0.09) continue;
         cv::circle(img, cv::Point(static_cast<int>(results[i].center.x), static_cast<int>(results[i].center.y)), 5, cv::Scalar(0, 0, 255), -1);
         std::string text = cv::format("%d (%.2f)", results[i].label, results[i].confidence);
         cv::putText(img, text, cv::Point(static_cast<int>(results[i].center.x) + 8, static_cast<int>(results[i].center.y) - 8), cv::FONT_HERSHEY_SIMPLEX, 0.5, results[i].valid ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255), 2);
