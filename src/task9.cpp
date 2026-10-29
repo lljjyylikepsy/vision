@@ -60,8 +60,7 @@ void processStream(cv::VideoCapture& cap, const std::string& outName) {
     cv::Mat frame;
     int frameID = 0;
     while (1) {
-        cap >> frame;
-        if (frame.empty()) break;
+        if (!cap.read(frame) || frame.empty()) break;
         double t0 = common::tick();
         //
         ArrowResult r = detectArrow(frame);
@@ -199,6 +198,11 @@ void drawResult(cv::Mat& img, const ArrowResult& r) {
     cv::putText(img, buf, cv::Point(20, 40), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
     std::snprintf(buf, sizeof(buf), "center (%.1f, %.1f)  tip (%.1f, %.1f)", r.center.x, r.center.y, r.tip.x, r.tip.y);
     cv::putText(img, buf, cv::Point(20, 75), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
+    if (!r.region.empty()) {
+        std::vector<std::vector<cv::Point>> regionContours;
+        cv::findContours(r.region.clone(), regionContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        cv::drawContours(img, regionContours, -1, cv::Scalar(255, 0, 255), 2);
+    }
     return;
 }
 
